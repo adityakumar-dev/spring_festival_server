@@ -14,13 +14,14 @@ import firebase_admin
 from firebase_admin import credentials
 from sqlalchemy import func
 
-# Initialize Firebase Admin SDK
-cred = credentials.Certificate("firebase_json/visitor-management-bbd7c-firebase-adminsdk-fbsvc-c737c089a5.json")  # Update with your path
+# Remove the existing Firebase initialization
+# Initialize Firebase Admin SDK with the correct credentials
+cred = credentials.Certificate("firebase_json/visitor-management-bbd7c-firebase-adminsdk-fbsvc-c39ae22327.json")
 firebase_admin.initialize_app(cred, {
-    'databaseURL': 'https://visitor-management-bbd7c-default-rtdb.firebaseio.com/'  # Update with your database URL
+    'databaseURL': 'https://visitor-management-bbd7c-default-rtdb.firebaseio.com/'
 })
 
-from routes import app_users_handler, face_recognition, institutions, qr, quick_register, users
+from routes import analytics, app_users_handler, face_recognition, institutions, qr, users
 
 app = FastAPI()
 
@@ -51,8 +52,12 @@ app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(institutions.router, prefix="/institutions", tags=["institutions"])
 app.include_router(qr.router, prefix="/qr", tags=["qr"])
 app.include_router(face_recognition.router)
-app.include_router(quick_register.router)
+# app.include_router(quick_register.router)
 app.include_router(app_users_handler.router, prefix="/app_users", tags=["app_users"])
+app.include_router(analytics.router, )
+@app.get("/")
+async def check():
+    return {True}
 @app.get("/health-check")
 async def health_check():
     return {"status": "ok"}

@@ -1,8 +1,9 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Date, UniqueConstraint
 from sqlalchemy.orm import relationship, backref
 from datetime import datetime
 from database import Base
 from sqlalchemy import func
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 
 class Institution(Base):
     __tablename__ = "institutions"
@@ -20,76 +21,67 @@ class User(Base):
     user_id = Column(Integer, primary_key=True, index=True)
     name = Column(String)
     email = Column(String, unique=True, index=True)
-    aadhar_number = Column(String, unique=True, nullable=True)
+    unique_id_type = Column(String, unique=False, nullable=False)
+    unique_id = Column(String, unique=False, nullable=False)
     image_path = Column(String)
     qr_code = Column(String, nullable=True)
     is_student = Column(Boolean, default=False)
     is_instructor = Column(Boolean, default=False)
+    is_quick_register = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     institution_id = Column(Integer, ForeignKey("institutions.institution_id"), nullable=True)
-    # instructor_id = Column(Integer, ForeignKey("users.user_id"), nullable=True)
-    # instructor_group_id = Column(Integer, ForeignKey("instructor_groups.instructor_group_id"), nullable=True)
-    
-    # Relationships
     institution = relationship("Institution", back_populates="users")
-    # instructor_group = relationship("InstructorGroup", back_populates="instructors")
-    
-    # Self-referential relationship for instructor-student
-    # students = relationship(
-    #     "User",
-    #     "Institution"
-    #     # backref=backref("instructor", remote_side=[user_id]),
-    #     # foreign_keys=[instructor_id]
-    # )
-    
-    # One-to-many relationships
-    qr_scans = relationship("QRScan", back_populates="user")
-    face_recognitions = relationship("FaceRecognition", back_populates="user")
 
-class QRScan(Base):
-    __tablename__ = "qr_scans"
     
-    scan_id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.user_id"))
-    arrival_time = Column(DateTime, default=datetime.utcnow)
-    departure_time = Column(DateTime, nullable=True)
-    is_bypass = Column(Boolean, default=False)
-    bypass_reason = Column(String, nullable=True)
-    matched = Column(Boolean, default=False)
+    # Define the relationship to FinalRecords
+    final_records = relationship("FinalRecords", back_populates="user")
 
-    # Many-to-one relationship with user
-    user = relationship("User", back_populates="qr_scans")
 
-class FaceRecognition(Base):
-    __tablename__ = "face_recognitions"
-    
-    recognition_id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.user_id"))
-    image_path = Column(String)
-    face_matched = Column(Boolean)
-    error_message = Column(String, nullable=True)
-    timestamp = Column(DateTime, default=datetime.utcnow)
-
-    # Many-to-one relationship with user
-    user = relationship("User", back_populates="face_recognitions")
-
-class QuickRegister(Base):
-    __tablename__ = "quick_registers"
-    
-    register_id = Column(Integer, primary_key=True, index=True)
-    name = Column(String)
-    email = Column(String, unique=True, index=True)
-    aadhar_number = Column(String, unique=True, nullable=True)
-    image_path = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
 
 class AppUsers(Base):
     __tablename__ = "app_users"
 
     user_id = Column(Integer, primary_key=True, index=True)
-    name = Column(String)
+    name = Column(String, nullable=False, unique=True)
     email = Column(String, unique=False, index=True)
-    aadhar_number = Column(String, unique=True, nullable=True)
+    
+    unique_id_type = Column(String, unique=False, nullable=False)
+    unique_id = Column(String, unique=False, nullable=False)
     image_path = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+class FinalRecords(Base):
+    __tablename__ = "final_records"
+
+    record_id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.user_id"), unique=False)
+    entry_date = Column(Date, default=datetime.utcnow().date())
+    # app_user_id = Column(Integer, ForeignKey("app_users.user_id"), nullable=True)
+    
+    # Time tracking using JSONB
+    time_logs = Column(JSONB, default=list)  # Store array of time entries
+    # Example structure:
+    # [
+    #   {
+    #     "arrival": "2024-03-21T09:00:00",
+    #     "departure": "2024-03-21T12:00:00",
+    #     "duration": "3:00:00",
+    #     "entry_type": "normal"  # or "bypass"
+    #     "bypass_details": {      # only present if entry_type is "bypass"
+    #         "reason": "Face not detected",
+    #         "approved_by": "app_user_id"
+    #     }
+    #   }
+    # ]
+    
+    # Verification timestamps and face image
+    face_image_path = Column(String, nullable=True)
+    app_user_id = Column(Integer, ForeignKey("app_users.user_id"), nullable=True)
+    
+    # Relationship
+    user = relationship("User", back_populates="final_records")
+
+    __table_args__ = (
+        # Ensure unique combination of user_id, entry_date, and attempt_number
+        UniqueConstraint('user_id', 'entry_date',  name='unique_daily_attempt'),
+    )

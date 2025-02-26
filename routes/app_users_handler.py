@@ -21,16 +21,18 @@ async def create_app_user_endpoint(
     user_name : str = Form(...),
     user_password : str = Form(...), 
     user_email : str = Form(...),
-    aadhar_number : str = Form(...),
+    unique_id_type : str = Form(...),
+    # user_unique_id_type : str = Form(...),
+    unique_id : str = Form(...),
     profile_picture : UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
     firebase_controller = FirebaseController()
+    print(admin_name, admin_password, user_name, user_password, user_email, unique_id_type, unique_id, profile_picture)
     if admin_name == "admin" and admin_password == "admin":
-        app_user = db.query(AppUsers).filter(AppUsers.aadhar_number == aadhar_number).first()
-        if app_user is not None:
-            return { "status" : False, "message" : "Aadhar number already exists" }
-        isCreated = firebase_controller.create_app_user(user_name, user_password, user_email, aadhar_number)
+       
+        
+        isCreated = firebase_controller.create_app_user(user_name, user_password, user_email, unique_id_type, unique_id)
         print(isCreated)
         if isCreated is not None:
             if isCreated['status'] == True:
@@ -42,7 +44,8 @@ async def create_app_user_endpoint(
                 app_user = AppUsers(
                     name = user_name,
                     email = user_email,
-                    aadhar_number = aadhar_number,
+                    unique_id_type = unique_id_type,
+                    unique_id = unique_id,
                     image_path = profile_picture_path
                 )
 

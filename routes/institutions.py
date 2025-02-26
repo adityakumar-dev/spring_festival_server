@@ -22,7 +22,8 @@ def add_institutions(name: str = Form(...), db: Session = Depends(get_db)):
 def get_institutions(db: Session = Depends(get_db)):
     print("Getting institutions")
     print(db.query(models.Institution).all())
-    return db.query(models.Institution).all()
+    response = db.query(models.Institution).all()
+    return response
 
 # @router.get("/institutions/{institution_id}/instructors")
 # def get_institution_instructors(institution_id: int, db: Session = Depends(get_db)):

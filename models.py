@@ -49,6 +49,8 @@ class AppUsers(Base):
     unique_id = Column(String, unique=False, nullable=False)
     image_path = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
+    api_key = Column(String, unique=True, nullable=True)
+    api_key_expiry = Column(DateTime, nullable=True)
 
 class FinalRecords(Base):
     __tablename__ = "final_records"

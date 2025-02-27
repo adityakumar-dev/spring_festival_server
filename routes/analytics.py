@@ -93,11 +93,15 @@ def get_analytics(
                 'unique_users': set(),
                 'success_rate': 0,
                 'bypass_count': 0
-            })
+            }),
+            'scan_completion_times': [],  # For storing valid scan completion times
+            'recent_scan_times': []      # For storing last 10 entries
         }
 
         # Process records with timezone awareness
-        records = db.query(models.FinalRecords).filter(*base_filters).all()
+        records = db.query(models.FinalRecords).filter(*base_filters).order_by(
+            models.FinalRecords.entry_date.desc()
+        ).all()
         
         for record in records:
             for log in record.time_logs:
@@ -138,11 +142,29 @@ def get_analytics(
                 if entry_type == 'bypass':
                     stats['daily_stats'][date_str]['bypass_count'] += 1
 
+                # Calculate scan completion time (time between QR scan and face verification)
+                if log.get('arrival') and log.get('face_verification_time'):
+                    arrival_time = convert_to_system_time(datetime.fromisoformat(log['arrival']))
+                    face_time = convert_to_system_time(datetime.fromisoformat(log['face_verification_time']))
+                    
+                    # Calculate time difference in minutes
+                    time_diff = (face_time - arrival_time).total_seconds() / 60
+                    
+                    # Only consider entries completed within 3 minutes
+                    if 0 <= time_diff <= 3:
+                        stats['scan_completion_times'].append(time_diff)
+                        
+                        # Store recent scan times (we'll take last 10 later)
+                        stats['recent_scan_times'].append({
+                            'date': arrival_time.date().isoformat(),
+                            'completion_time': time_diff
+                        })
+
                 # Track duration if available with timezone awareness
                 if log.get('departure'):
                     arrival = convert_to_system_time(datetime.fromisoformat(log['arrival']))
                     departure = convert_to_system_time(datetime.fromisoformat(log['departure']))
-                    duration = (departure - arrival).total_seconds() / 3600  # in hours
+                    duration = (departure - arrival).total_seconds() / 60  # Convert to minutes
                     stats['duration_stats'].append(duration)
 
         # Calculate peak hours (hours with at least 80% of max traffic)
@@ -156,6 +178,19 @@ def get_analytics(
         # Calculate success rates and metrics
         total_entries = sum(stats['entry_types'].values())
         avg_duration = sum(stats['duration_stats']) / len(stats['duration_stats']) if stats['duration_stats'] else 0
+
+        # Calculate averages
+        avg_completion_time = (
+            sum(stats['scan_completion_times']) / len(stats['scan_completion_times'])
+            if stats['scan_completion_times'] else 0
+        )
+
+        # Get last 10 valid scan completion times
+        recent_scans = stats['recent_scan_times'][-10:] if stats['recent_scan_times'] else []
+        avg_recent_completion_time = (
+            sum(scan['completion_time'] for scan in recent_scans) / len(recent_scans)
+            if recent_scans else 0
+        )
 
         return {
             "time_range": {
@@ -196,10 +231,20 @@ def get_analytics(
                     if total_entries > 0 else 0, 2
                 )
             },
+            "scan_efficiency": {
+                "average_completion_time_minutes": round(avg_completion_time, 2),
+                "recent_average_completion_time_minutes": round(avg_recent_completion_time, 2),
+                "recent_scans": recent_scans,
+                "total_valid_scans": len(stats['scan_completion_times']),
+                "completion_rate_within_3min": round(
+                    len(stats['scan_completion_times']) / stats['verification_stats']['total_attempts'] * 100
+                    if stats['verification_stats']['total_attempts'] > 0 else 0, 2
+                )
+            },
             "entry_statistics": {
                 "total_entries": total_entries,
                 "entry_types": stats['entry_types'],
-                "average_duration_hours": round(avg_duration, 2),
+                "average_duration_minutes": round(avg_duration, 2),  # Changed to minutes
                 "daily_patterns": {
                     date: {
                         "entries": data['entries'],
@@ -585,7 +630,7 @@ def get_detailed_analytics(
                     entry_stats['completed_entries'] += 1
                     arrival = datetime.fromisoformat(log['arrival'])
                     departure = datetime.fromisoformat(log['departure'])
-                    duration_stats.append((departure - arrival).total_seconds() / 3600)  # hours
+                    duration_stats.append((departure - arrival).total_seconds())
                 else:
                     entry_stats['incomplete_entries'] += 1
 
@@ -649,7 +694,7 @@ def get_detailed_analytics(
             },
             "entry_patterns": {
                 **entry_stats,
-                "average_duration_hours": round(avg_duration, 2),
+                "average_duration_seconds": round(avg_duration, 2),
                 "daily_patterns": {
                     date: {
                         **stats,
@@ -663,7 +708,7 @@ def get_detailed_analytics(
                     entry_stats['total_entries'] / len(daily_stats)
                     if daily_stats else 0, 2
                 ),
-                "average_duration_per_entry": round(avg_duration, 2),
+                "average_duration_per_entry_seconds": round(avg_duration, 2),
                 "bypass_to_normal_ratio": round(
                     entry_stats['bypass_entries'] / entry_stats['normal_entries']
                     if entry_stats['normal_entries'] > 0 else 0, 2
@@ -717,7 +762,7 @@ def get_trend_analytics(
                 
                 if log.get('departure'):
                     departure_time = datetime.fromisoformat(log['departure'])
-                    duration = (departure_time - arrival_time).total_seconds() / 3600
+                    duration = (departure_time - arrival_time).total_seconds()
                     weekly_stats[week_number]['average_duration'].append(duration)
 
         # Process weekly stats
@@ -727,7 +772,7 @@ def get_trend_analytics(
                 'successful_entries': stats['successful_entries'],
                 'unique_users': len(stats['unique_users']),
                 'bypass_rate': round(stats['bypass_count'] / stats['total_entries'] * 100, 2) if stats['total_entries'] > 0 else 0,
-                'average_duration': round(sum(stats['average_duration']) / len(stats['average_duration']), 2) if stats['average_duration'] else 0
+                'average_duration_seconds': round(sum(stats['average_duration']) / len(stats['average_duration']), 2) if stats['average_duration'] else 0
             }
             for week, stats in weekly_stats.items()
         }

@@ -1,5 +1,5 @@
 from uuid import uuid4
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile    
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Header
 from sqlalchemy.orm import Session
 from dependencies import get_db
 from face_auth import is_face_match
@@ -7,7 +7,7 @@ import models
 import os
 from firebase_controller import firebase_controller
 from datetime import datetime
-
+from utils.security import SecurityHandler
 router = APIRouter()
 UPLOAD_DIR = "uploads"
 
@@ -15,12 +15,13 @@ UPLOAD_DIR = "uploads"
 async def verify_face(
     user_id: int = Form(...),
     is_group_entry: bool = Form(False),
-    app_user_id: int = Form(None),   
-    app_user_email: str = Form(None),
+    api_key: str = Header(...),
     image: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
     try:
+        app_user = SecurityHandler().verify_api_key(db, api_key)
+
         os.makedirs("temp_images", exist_ok=True)
         user = db.query(models.User).filter(models.User.user_id == user_id).first()
         if not user:
@@ -29,19 +30,6 @@ async def verify_face(
         
         if is_group_entry and not user.is_instructor:
             return {"error": "User is not an instructor"}
-
-        if app_user_email is None and app_user_id is None:
-            raise HTTPException(status_code=400, detail="App user email or id is required")
-        
-        if app_user_email:
-            app_user = db.query(models.AppUsers).filter(models.AppUsers.email == app_user_email).first()
-            if not app_user:
-                raise HTTPException(status_code=404, detail="App user not found")
-            
-        if app_user_id:
-            app_user = db.query(models.AppUsers).filter(models.AppUsers.user_id == app_user_id).first()
-            if not app_user:
-                raise HTTPException(status_code=404, detail="App user not found")
         
         print(f"Found user with image_path: {user.image_path}")
         stored_image_path = user.image_path
@@ -97,7 +85,7 @@ async def verify_face(
                         user_id=user_id,
                         entry_date=current_time.date(),
                         face_image_path=temp_image_path,
-                        app_user_id=app_user_id,
+                        app_user_id=app_user.user_id,
                         time_logs=[{
                             "arrival": current_time.isoformat(),
                             "departure": None,

@@ -1,41 +1,36 @@
 import os
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from dependencies import get_db
+from dependencies import get_db, get_current_app_user
 import models
 from firebase_controller import firebase_controller
 from sqlalchemy import func
 from datetime import datetime
 from fastapi import Form
+from utils.security import SecurityHandler
+
 router = APIRouter()
+security_handler = SecurityHandler()
 
 @router.post("/scan_qr")
 def scan_qr(
     user_id: int = Form(...),
-    app_user_id: int = Form(None),
-    app_user_email: str = Form(None),
     is_group_entry: bool = Form(False),
     is_bypass: bool = Form(False),
     bypass_reason: str = Form(None),
+    current_app_user: models.AppUsers = Depends(get_current_app_user),
     db: Session = Depends(get_db)
 ):
     try:
+        # Use current_app_user instead of looking up app_user
+        app_user_id = current_app_user.user_id
+        app_user_email = current_app_user.email
+
         # Validate user
         user = db.query(models.User).filter(models.User.user_id == user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
-
-        # Validate app user
-        if not app_user_id and not app_user_email:
-            raise HTTPException(status_code=400, detail="App user email or id is required")
-        
-        app_user = db.query(models.AppUsers).filter(
-            models.AppUsers.user_id == app_user_id if app_user_id 
-            else models.AppUsers.email == app_user_email
-        ).first()
-        if not app_user:
-            raise HTTPException(status_code=404, detail="App user not found")
 
         # Validate group entry
         if is_group_entry:
@@ -80,7 +75,65 @@ def scan_qr(
                 last_entry = existing_entry.time_logs[-1]
                 if last_entry.get('departure') is None:
                     should_add_new_entry = False
-                    raise HTTPException(status_code=400, detail="Previous entry not closed. Please record departure first.")
+
+                    # Check if face verification is already done
+                    if last_entry.get('face_verification_time') is None:
+                        # Create a new dictionary instead of updating the existing one
+                        updated_entry = {
+                            'arrival': datetime.utcnow().isoformat(),
+                            'departure': None,
+                            'qr_verified': True,
+                            'qr_verification_time': datetime.utcnow().isoformat(),
+                            'face_verified': last_entry.get('face_verified', False),
+                            'face_verification_time': last_entry.get('face_verification_time'),
+                            'entry_type': "bypass" if is_bypass else "normal",
+                        }
+
+                        # Add bypass details only if it's a bypass entry
+                        if is_bypass:
+                            updated_entry['bypass_details'] = {
+                                "reason": bypass_reason or "No reason provided",
+                                "approved_by": app_user_id,
+                                "approved_at": datetime.utcnow().isoformat()
+                            }
+                        else:
+                            # Remove bypass details if it's not a bypass entry
+                            updated_entry['bypass_details'] = None
+
+                        # Update the database directly
+                        new_time_logs = existing_entry.time_logs[:-1] + [updated_entry]
+                        db.query(models.FinalRecords).filter(
+                            models.FinalRecords.user_id == user_id,
+                            models.FinalRecords.entry_date == datetime.utcnow().date()
+                        ).update({
+                            "time_logs": new_time_logs
+                        }, synchronize_session=False)
+
+                        try:
+                            db.commit()
+                            # Refresh to get updated data
+                            db.refresh(existing_entry)
+                        except Exception as e:
+                            db.rollback()
+                            raise HTTPException(
+                                status_code=500, 
+                                detail=f"Failed to update entry: {str(e)}"
+                            )
+
+                        return {
+                            "status": "success",
+                            "message": "QR verification successful. Arrival time updated.",
+                            "entry_type": "bypass" if is_bypass else "normal",
+                            "arrival_time": datetime.utcnow().isoformat(),
+                            "bypass_reason": bypass_reason if is_bypass else None,
+                            "updated_entry": updated_entry
+                        }
+                    else:
+                        raise HTTPException(
+                            status_code=400, 
+                            detail="Face verification is already completed. Please use departure section."
+                        )
+
             
             if should_add_new_entry:
                 new_log = create_time_log_entry("bypass" if is_bypass else "normal")
@@ -139,22 +192,14 @@ def scan_qr(
 @router.post("/departure")
 def departure(
     user_id: int = Form(...),
-    app_user_id: int = Form(None),
-    app_user_email: str = Form(None),
+    current_app_user: models.AppUsers = Depends(get_current_app_user),
     db: Session = Depends(get_db)
 ):
     try:
+        app_user_id = current_app_user.user_id
         # Validate app user
-        if not app_user_id and not app_user_email:
-            raise HTTPException(status_code=400, detail="App user email or id is required")
         
-        app_user = db.query(models.AppUsers).filter(
-            models.AppUsers.user_id == app_user_id if app_user_id 
-            else models.AppUsers.email == app_user_email
-        ).first()
-        if not app_user:
-            raise HTTPException(status_code=404, detail="App user not found")
-
+        
         # Validate user
         user = db.query(models.User).filter(models.User.user_id == user_id).first()
         if not user:

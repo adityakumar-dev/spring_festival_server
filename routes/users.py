@@ -1,6 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, File, Form, UploadFile, Query
+from datetime import datetime
+from email.header import Header
+from fastapi import APIRouter, Depends, HTTPException, File, Form, UploadFile, Query, Header
 from sqlalchemy.orm import Session
-from dependencies import get_db
+from dependencies import get_db, get_current_app_user
 import models
 from utils.file_handlers import save_upload_file, delete_file
 from qr_generation import generate_qr_code
@@ -12,6 +14,10 @@ from fastapi.responses import JSONResponse, FileResponse
 from firebase_controller import firebase_controller
 from uuid import uuid4
 from template_generator import VisitorCardGenerator
+from utils.security import SecurityHandler
+from fastapi import BackgroundTasks
+from pathlib import Path
+import mimetypes  # Add this import
 
 router = APIRouter()
 
@@ -30,10 +36,17 @@ def create_user(
     is_quick_register: bool = Form(False),
     unique_id_type: str = Form(...),
     unique_id: str = Form(...),
+    api_key: str = Header(None),  # Optional header
     institution_id: int = Form(None),
     db: Session = Depends(get_db)
 ):
     try:
+        if is_quick_register:
+            if not api_key:
+                raise HTTPException(status_code=401, detail="API key required for quick register")
+            app_user = SecurityHandler().verify_api_key(db, api_key)
+            if not app_user:
+                raise HTTPException(status_code=401, detail="Invalid API key")
         # Structured logging of input parameters
         request_data = {
             "name": name,
@@ -114,9 +127,9 @@ def create_user(
         card_path = visitor_card_generator.create_visitor_card({
             "name": new_user.name,
             "email": new_user.email,
-            "profile_image_path": new_user.image_path,
+            "profile_image_path": str(Path(new_user.image_path)),
             "qr_code_path": new_user.qr_code,
-            "user_id": new_user.user_id
+            "user_id": str(new_user.user_id)
         })
 
         print(f"Successfully created user: {new_user.user_id}")
@@ -127,6 +140,11 @@ def create_user(
             "qr_code": new_user.qr_code,
             "image_path": new_user.image_path,
             "visitor_card_path": card_path,
+            "visitor_card": {
+                "path": card_path,
+                "url": f"/static/visitor_cards/{card_path.split('/')[-1]}" if card_path else None,
+                "generated_at": str(datetime.now())
+            },
             "is_student": new_user.is_student,
             "is_instructor": new_user.is_instructor,
             "institution_id": new_user.institution_id,
@@ -141,7 +159,8 @@ def create_user(
 
 @router.get("/{user_id}")
 def get_user(
-    user_id: int, 
+    user_id: int,
+    api_key: str = Header(None),
     db: Session = Depends(get_db)
 ):
     try:
@@ -292,4 +311,31 @@ def get_all_users(
         })
 
     return result
+
+# from fastapi import Query
+
+@router.get("/download-visitor-card/")
+async def download_visitor_card(
+    card_path: str = Query(..., description="Path of the visitor card file"),
+):
+
+    try:
+        # Print debug info
+        print(f"Requested card path: {card_path}")
+        print(f"File exists check: {os.path.exists(card_path)}")
+        
+        if not os.path.exists(card_path):
+            raise HTTPException(
+                status_code=404, 
+                detail=f"File not found at path: {card_path}"
+            )
+        
+        return FileResponse(
+            path=card_path,
+            filename=os.path.basename(card_path),
+            media_type='image/png'  # Set specific media type for PNG
+        )
+    except Exception as e:
+        print(f"Error serving file: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 

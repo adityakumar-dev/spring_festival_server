@@ -1,3 +1,4 @@
+from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 import os
 import qrcode
@@ -30,14 +31,14 @@ class VisitorCardGenerator:
             
             # Create a copy of template to work on
             card = template.copy()
-            
+            header_pos = (323, 134)
             # Calculate positions
-            profile_pos = (263, 184)  # Small box Top Left
+            profile_pos = (249, 254)  # Small box Top Left
             qr_pos = (632, 196)       # Big box Top Left
             
             # Text positions (below the profile image)
-            name_pos = (263, 468)      # Below profile image
-            email_pos = (263, 548)     # Below name
+            name_pos = (263, 498)      # Below profile image
+            email_pos = (263, 568)     # Below name
             
             # Paste images with transparency
             if profile_img.mode == 'RGBA':
@@ -53,14 +54,18 @@ class VisitorCardGenerator:
             # Add text
             draw = ImageDraw.Draw(card)
             font_name = ImageFont.truetype(self.font_path, 48)
+            font_header = ImageFont.truetype(self.font_path, 16)
+            font_valid_till = ImageFont.truetype(self.font_path, 12)
             font_email = ImageFont.truetype(self.font_path, 20)
             
             draw.text(name_pos, user_data["name"], fill="black", font=font_name, stroke_width=2, stroke_fill="black")
             draw.text(email_pos, user_data["email"], fill="black", font=font_email)
-            
+            # draw.text(header_pos, "RAJ BHAVAN UTTAKHAND", fill="black", font=font_header, stroke_width=2, stroke_fill="black")
+            # draw.text((403, 194), "Valid Till : 7,8,9 March 2025", fill="black", font=font_valid_till,  font_size=8)
+            draw.text((263, 608),"USER ID : " + user_data["user_id"], fill="black", font=font_name, stroke_width=1, stroke_fill="black")
             # Save the card
             os.makedirs("generated_cards", exist_ok=True)
-            output_path = f"generated_cards/{user_data['name'].replace(' ', '_')}_visitor_card.png"
+            output_path = f"generated_cards/{user_data['name'].replace(' ', '_')}_visitor_card{datetime.now().strftime('%Y-%m-%d')}.png"
             card.save(output_path, "PNG", quality=95)
             
             return output_path

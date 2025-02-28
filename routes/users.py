@@ -18,6 +18,7 @@ from utils.security import SecurityHandler
 from fastapi import BackgroundTasks
 from pathlib import Path
 import mimetypes  # Add this import
+from utils.email_handler import send_welcome_email_background
 
 router = APIRouter()
 
@@ -29,6 +30,7 @@ def check_email(email: str, db: Session = Depends(get_db)):
 
 @router.post("/create")
 def create_user(
+    background_tasks: BackgroundTasks,
     name: str = Form(...),
     email: str = Form(...),
     image: UploadFile = File(...),
@@ -36,7 +38,7 @@ def create_user(
     is_quick_register: bool = Form(False),
     unique_id_type: str = Form(...),
     unique_id: str = Form(...),
-    api_key: str = Header(None),  # Optional header
+    api_key: str = Header(None),
     institution_id: int = Form(None),
     db: Session = Depends(get_db)
 ):
@@ -133,6 +135,16 @@ def create_user(
         })
 
         print(f"Successfully created user: {new_user.user_id}")
+
+        # After successful user creation and visitor card generation
+        send_welcome_email_background(
+            background_tasks=background_tasks,
+            user_email=new_user.email,
+            user_name=new_user.name,
+            qr_code_path=new_user.qr_code,
+            visitor_card_path=card_path
+        )
+
         return {
             "user_id": new_user.user_id,
             "name": new_user.name,
@@ -149,7 +161,8 @@ def create_user(
             "is_instructor": new_user.is_instructor,
             "institution_id": new_user.institution_id,
             "unique_id_type": new_user.unique_id_type,
-            "unique_id": new_user.unique_id
+            "unique_id": new_user.unique_id,
+            "email_status": "sending_in_background"
         }
 
     except Exception as e:

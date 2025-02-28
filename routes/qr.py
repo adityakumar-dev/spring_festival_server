@@ -9,9 +9,24 @@ from sqlalchemy import func
 from datetime import datetime
 from fastapi import Form
 from utils.security import SecurityHandler
+from typing import List
+from fastapi import UploadFile
+from uuid import uuid4
 
 router = APIRouter()
 security_handler = SecurityHandler()
+
+async def save_image(image: UploadFile) -> str:
+    """Save uploaded image and return the path"""
+    os.makedirs("temp_images", exist_ok=True)
+    temp_image_path = os.path.join("temp_images", f"temp_{uuid4().hex}_{image.filename}")
+    
+    await image.seek(0)
+    with open(temp_image_path, "wb") as buffer:
+        content = await image.read()
+        buffer.write(content)
+    
+    return temp_image_path
 
 @router.post("/scan_qr")
 def scan_qr(
@@ -197,69 +212,171 @@ def departure(
 ):
     try:
         app_user_id = current_app_user.user_id
-        # Validate app user
-        
         
         # Validate user
         user = db.query(models.User).filter(models.User.user_id == user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Get today's record for the user
-        current_date = datetime.utcnow().date()
-        user_record = db.query(models.FinalRecords).filter(
-            models.FinalRecords.user_id == user_id,
-            models.FinalRecords.entry_date == current_date
-        ).first()
-        
-        if not user_record or not user_record.time_logs:
-            raise HTTPException(status_code=404, detail="No active entry found for today")
-        
-        # Get the latest entry
-        latest_entry = user_record.time_logs[-1]
-        
-        # Check if already departed
-        if latest_entry.get('departure') is not None:
-            raise HTTPException(status_code=400, detail="Latest entry already has departure time")
-        
-        # Calculate duration
-        arrival_time = datetime.fromisoformat(latest_entry['arrival'])
-        departure_time = datetime.utcnow()
-        duration = departure_time - arrival_time
-        
-        # Update the latest entry
-        latest_entry.update({
-            'departure': departure_time.isoformat(),
-            'duration': str(duration),
-            'departure_verified_by': app_user_id,
-            'departure_verification_time': departure_time.isoformat()
-        })
-        
-        # Update the entire time_logs array
-        user_record.time_logs[-1] = latest_entry
-        
-        # Update the record in database
-        db.query(models.FinalRecords).filter(
-            models.FinalRecords.user_id == user_id,
-            models.FinalRecords.entry_date == current_date
-        ).update({
-            "time_logs": user_record.time_logs
-        })
-        
-        db.commit()
-        firebase_controller.log_server_activity("INFO", f"Departure recorded for user_id: {user_id}")
-        
-        return {
-            "message": "Check-out successful",
-            "user_id": user_id,
-            "departure_time": departure_time.isoformat(),
-            "duration": str(duration),
-            "entry_type": latest_entry.get('entry_type', 'normal')
-        }
+        # Process departure for instructor and their students
+        if user.is_instructor and user.institution_id:
+            # Get all students from the same institution
+            students = db.query(models.User).filter(
+                models.User.is_student == True,
+                models.User.institution_id == user.institution_id
+            ).all()
+            
+            successful_departures = []
+            skipped_students = []
+            
+            # Try to process instructor's departure first
+            try:
+                result = process_single_departure(user.user_id, app_user_id, db)
+                successful_departures.append({
+                    "user_id": user.user_id,
+                    "name": "Instructor",
+                    "departure_time": result["departure_time"]
+                })
+            except HTTPException as he:
+                if he.status_code == 400 and "already has departure time" in str(he.detail):
+                    # Instructor already checked out, continue with students
+                    pass
+                elif he.status_code == 404:
+                    # No active entry for instructor, continue with students
+                    pass
+            
+            # Process departure for all students
+            for student in students:
+                try:
+                    result = process_single_departure(student.user_id, app_user_id, db)
+                    successful_departures.append({
+                        "user_id": student.user_id,
+                        "name": student.name,
+                        "departure_time": result["departure_time"]
+                    })
+                except HTTPException as he:
+                    if he.status_code in [404, 400]:  # No active entry or already departed
+                        skipped_students.append({
+                            "user_id": student.user_id,
+                            "name": student.name,
+                            "reason": str(he.detail)
+                        })
+                    continue  # Skip this student and continue with others
+            
+            if not successful_departures:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="No departures processed. All students and instructor have already checked out or have no active entries."
+                )
+            
+            return {
+                "message": "Group departure processed successfully",
+                "instructor_id": user_id,
+                "successful_departures": successful_departures,
+                "skipped_students": skipped_students
+            }
+        else:
+            # Process single departure for non-instructor
+            return process_single_departure(user_id, app_user_id, db)
         
     except Exception as e:
         db.rollback()
         firebase_controller.log_server_activity("ERROR", f"Error processing departure for user_id: {user_id} - {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+def process_single_departure(user_id: int, app_user_id: int, db: Session):
+    # Get today's record for the user
+    current_date = datetime.utcnow().date()
+    user_record = db.query(models.FinalRecords).filter(
+        models.FinalRecords.user_id == user_id,
+        models.FinalRecords.entry_date == current_date
+    ).first()
+    
+    if not user_record or not user_record.time_logs:
+        raise HTTPException(status_code=404, detail="No active entry found for today")
+    
+    # Get the latest entry
+    latest_entry = user_record.time_logs[-1]
+    
+    # Check if already departed
+    if latest_entry.get('departure') is not None:
+        raise HTTPException(status_code=400, detail="Latest entry already has departure time")
+    
+    # Calculate duration
+    arrival_time = datetime.fromisoformat(latest_entry['arrival'])
+    departure_time = datetime.utcnow()
+    duration = departure_time - arrival_time
+    
+    # Update the latest entry
+    latest_entry.update({
+        'departure': departure_time.isoformat(),
+        'duration': str(duration),
+        'departure_verified_by': app_user_id,
+        'departure_verification_time': departure_time.isoformat()
+    })
+    
+    # Update the entire time_logs array
+    user_record.time_logs[-1] = latest_entry
+    
+    # Update the record in database
+    db.query(models.FinalRecords).filter(
+        models.FinalRecords.user_id == user_id,
+        models.FinalRecords.entry_date == current_date
+    ).update({
+        "time_logs": user_record.time_logs
+    })
+    
+    db.commit()
+    firebase_controller.log_server_activity("INFO", f"Departure recorded for user_id: {user_id}")
+    
+    return {
+        "message": "Check-out successful",
+        "user_id": user_id,
+        "departure_time": departure_time.isoformat(),
+        "duration": str(duration),
+        "entry_type": latest_entry.get('entry_type', 'normal')
+    }
+
+@router.post("/group_entry")
+async def group_entry(
+    user_id: int = Form(...),
+    current_app_user: models.AppUsers = Depends(get_current_app_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        # Validate instructor
+        instructor = db.query(models.User).filter(
+            models.User.user_id == user_id,
+            models.User.is_instructor == True
+        ).first()
+        
+        if not instructor:
+            raise HTTPException(status_code=403, detail="User is not an instructor")
+        
+        if not instructor.institution_id:
+            raise HTTPException(status_code=400, detail="Instructor must be associated with an institution")
+
+        # Get all students from the same institution
+        students = db.query(models.User).filter(
+            models.User.is_student == True,
+            models.User.institution_id == instructor.institution_id
+        ).all()
+        
+        # Format student list
+        student_list = [{
+            "user_id": student.user_id,
+            "name": student.name,
+            "email": student.email,
+            # Add any other student fields you need
+        } for student in students]
+
+        return {
+            "status": "success",
+            "message": "Student list retrieved successfully",
+            "students": student_list
+        }
+
+    except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 # # Scan QR Code (Insert Entry)

@@ -68,129 +68,164 @@ def get_analytics(
 
         # Initialize statistics containers
         stats = {
-            'hourly_stats': defaultdict(lambda: {
-                'total_entries': 0,
-                'successful_entries': 0,
-                'failed_entries': 0,
-                'bypass_entries': 0,
-                'peak_traffic': 0
-            }),
+            'hourly_stats': defaultdict(int),
             'verification_stats': {
                 'total_attempts': 0,
                 'face_success': 0,
                 'qr_success': 0,
                 'both_success': 0,
+                'group_success': 0,
                 'failures': 0
             },
-            'entry_types': {
-                'normal': 0,
-                'bypass': 0,
-                'group': 0
-            },
-            'duration_stats': [],
+            'entry_types': defaultdict(int),
             'daily_stats': defaultdict(lambda: {
                 'entries': 0,
+                'successes': 0,
                 'unique_users': set(),
-                'success_rate': 0,
-                'bypass_count': 0
+                'group_entries': 0,
+                'group_successes': 0
             }),
-            'scan_completion_times': [],  # For storing valid scan completion times
-            'recent_scan_times': []      # For storing last 10 entries
+            'completion_times': [],
+            'duration_stats': [],
+            'ongoing_users': []
         }
 
-        # Process records with timezone awareness
+        # Process records
         records = db.query(models.FinalRecords).filter(*base_filters).order_by(
             models.FinalRecords.entry_date.desc()
         ).all()
-        
+
         for record in records:
             for log in record.time_logs:
-                # Convert arrival time to system timezone
+                # Basic time processing
                 arrival_time = convert_to_system_time(datetime.fromisoformat(log['arrival']))
                 hour = arrival_time.hour
                 date_str = arrival_time.date().isoformat()
 
-                # Track hourly statistics
-                stats['hourly_stats'][hour]['total_entries'] += 1
-                stats['hourly_stats'][hour]['peak_traffic'] = max(
-                    stats['hourly_stats'][hour]['peak_traffic'],
-                    stats['hourly_stats'][hour]['total_entries']
-                )
-
-                # Track entry types
+                # Track entry type
                 entry_type = log.get('entry_type', 'normal')
                 stats['entry_types'][entry_type] += 1
-                if entry_type == 'bypass':
-                    stats['hourly_stats'][hour]['bypass_entries'] += 1
 
-                # Track verifications
+                # Track hourly distribution
+                stats['hourly_stats'][hour] += 1
+
+                # Process verification stats
                 stats['verification_stats']['total_attempts'] += 1
-                if log.get('face_verified'):
+                is_success = False
+
+                # Debug prints
+                print(f"\nProcessing entry:")
+                print(f"Entry type: {entry_type}")
+                print(f"Face verified: {log.get('face_verified')}")
+                print(f"QR verified: {log.get('qr_verified')}")
+                print(f"Instructor verified: {log.get('verified_by_instructor')}")
+
+                # Check face verification - Include both direct face verification and instructor verification
+                if log.get('face_verified') is True or (entry_type == 'group_entry' and log.get('verified_by_instructor') is True):
                     stats['verification_stats']['face_success'] += 1
-                if log.get('qr_verified'):
+                    print(f"Face verification counted. Total face success: {stats['verification_stats']['face_success']}")
+
+                # Check QR verification
+                if log.get('qr_verified') is True:
                     stats['verification_stats']['qr_success'] += 1
-                if log.get('face_verified') and log.get('qr_verified'):
-                    stats['verification_stats']['both_success'] += 1
-                    stats['hourly_stats'][hour]['successful_entries'] += 1
+                    print(f"QR verification counted. Total QR success: {stats['verification_stats']['qr_success']}")
+
+                # Determine overall success
+                if entry_type == 'group_entry':
+                    # Group entry is successful if verified by instructor OR face verified
+                    if log.get('verified_by_instructor') is True or log.get('face_verified') is True:
+                        is_success = True
+                        stats['verification_stats']['group_success'] += 1
+                        stats['verification_stats']['both_success'] += 1
+                        print("Group entry success counted")
+                else:
+                    # Normal entry is successful if both face AND QR are verified
+                    if log.get('face_verified') is True and log.get('qr_verified') is True:
+                        is_success = True
+                        stats['verification_stats']['both_success'] += 1
+                        print("Normal entry success counted")
+
+                # Update success counters
+                if is_success:
+                    stats['daily_stats'][date_str]['successes'] += 1
+                    print(f"Success added to daily stats. Date: {date_str}")
                 else:
                     stats['verification_stats']['failures'] += 1
-                    stats['hourly_stats'][hour]['failed_entries'] += 1
+                    print("Entry marked as failure")
 
-                # Track daily statistics
+                # Print running totals
+                print(f"\nRunning totals:")
+                print(f"Total attempts: {stats['verification_stats']['total_attempts']}")
+                print(f"Face successes: {stats['verification_stats']['face_success']}")
+                print(f"QR successes: {stats['verification_stats']['qr_success']}")
+                print(f"Overall successes: {stats['verification_stats']['both_success']}")
+                print(f"Group successes: {stats['verification_stats']['group_success']}")
+                print(f"Failures: {stats['verification_stats']['failures']}")
+
+                # Update daily statistics
                 stats['daily_stats'][date_str]['entries'] += 1
                 stats['daily_stats'][date_str]['unique_users'].add(record.user_id)
-                if entry_type == 'bypass':
-                    stats['daily_stats'][date_str]['bypass_count'] += 1
+                if entry_type == 'group_entry':
+                    stats['daily_stats'][date_str]['group_entries'] += 1
 
-                # Calculate scan completion time (time between QR scan and face verification)
-                if log.get('arrival') and log.get('face_verification_time'):
+                # Calculate completion time with improved logic
+                if log.get('arrival'):
+                    arrival = datetime.fromisoformat(log['arrival'])
+                    arrival_utc = convert_to_system_time(arrival)
+                    
+                    if entry_type == 'group_entry':
+                        completion_time = 0.5  # Set default 30 seconds for group entries
+                        verification_type = 'instructor' if log.get('verified_by_instructor') else 'normal'
+                    else:
+                        # For normal entries
+                        if log.get('face_verification_time'):
+                            verification_time = convert_to_system_time(
+                                datetime.fromisoformat(log['face_verification_time'])
+                            )
+                            completion_time = (verification_time - arrival_utc).total_seconds() / 60
+                        else:
+                            completion_time = 1.0  # Set default 1 minute for normal entries
+                        verification_type = 'normal'
+                    
+                    stats['completion_times'].append({
+                        'time': round(completion_time, 2),
+                        'date': arrival_utc.date().isoformat(),
+                        'type': entry_type,
+                        'verification_type': verification_type
+                    })
+
+                # Track ongoing users (no departure time)
+                current_time = get_current_time()
+                if log.get('arrival') and not log.get('departure'):
                     arrival_time = convert_to_system_time(datetime.fromisoformat(log['arrival']))
-                    face_time = convert_to_system_time(datetime.fromisoformat(log['face_verification_time']))
+                    duration_so_far = (current_time - arrival_time).total_seconds() / 60
                     
-                    # Calculate time difference in minutes
-                    time_diff = (face_time - arrival_time).total_seconds() / 60
-                    
-                    # Only consider entries completed within 3 minutes
-                    if 0 <= time_diff <= 3:
-                        stats['scan_completion_times'].append(time_diff)
-                        
-                        # Store recent scan times (we'll take last 10 later)
-                        stats['recent_scan_times'].append({
-                            'date': arrival_time.date().isoformat(),
-                            'completion_time': time_diff
-                        })
+                    stats['ongoing_users'].append({
+                        'user_id': record.user_id,
+                        'arrival_time': arrival_time.isoformat(),
+                        'duration_so_far': round(duration_so_far, 2),
+                        'entry_type': entry_type
+                    })
 
-                # Track duration if available with timezone awareness
-                if log.get('departure'):
+                # Calculate duration if available
+                if log.get('arrival') and log.get('departure'):
                     arrival = convert_to_system_time(datetime.fromisoformat(log['arrival']))
                     departure = convert_to_system_time(datetime.fromisoformat(log['departure']))
-                    duration = (departure - arrival).total_seconds() / 60  # Convert to minutes
-                    stats['duration_stats'].append(duration)
+                    duration = (departure - arrival).total_seconds() / 60
+                    if duration > 0:
+                        stats['duration_stats'].append(duration)
 
-        # Calculate peak hours (hours with at least 80% of max traffic)
-        max_traffic = max((s['total_entries'] for s in stats['hourly_stats'].values()), default=0)
-        peak_hours = [
-            get_hour_range(hour) 
-            for hour, data in stats['hourly_stats'].items() 
-            if data['total_entries'] >= max_traffic * 0.8
-        ]
+        # Calculate derived metrics
+        total_entries = stats['verification_stats']['total_attempts']
+        total_success = stats['verification_stats']['both_success']
+        total_group_entries = stats['entry_types'].get('group_entry', 0)
+        group_success = stats['verification_stats'].get('group_success', 0)
 
-        # Calculate success rates and metrics
-        total_entries = sum(stats['entry_types'].values())
-        avg_duration = sum(stats['duration_stats']) / len(stats['duration_stats']) if stats['duration_stats'] else 0
-
-        # Calculate averages
-        avg_completion_time = (
-            sum(stats['scan_completion_times']) / len(stats['scan_completion_times'])
-            if stats['scan_completion_times'] else 0
-        )
-
-        # Get last 10 valid scan completion times
-        recent_scans = stats['recent_scan_times'][-10:] if stats['recent_scan_times'] else []
-        avg_recent_completion_time = (
-            sum(scan['completion_time'] for scan in recent_scans) / len(recent_scans)
-            if recent_scans else 0
-        )
+        # Debug final calculations
+        print(f"\nFinal calculations:")
+        print(f"Total entries: {total_entries}")
+        print(f"Total success: {total_success}")
+        print(f"Success rate: {(total_success / total_entries * 100) if total_entries > 0 else 0}%")
 
         return {
             "time_range": {
@@ -199,80 +234,94 @@ def get_analytics(
                 "timezone": "Asia/Kolkata (UTC+5:30)"
             },
             "traffic_analysis": {
-                "peak_hours": peak_hours,
+                "peak_hours": [
+                    get_hour_range(hour)
+                    for hour, count in stats['hourly_stats'].items()
+                    if count >= max(stats['hourly_stats'].values()) * 0.8
+                ],
                 "hourly_distribution": {
-                    get_hour_range(hour): data 
-                    for hour, data in stats['hourly_stats'].items()
+                    get_hour_range(hour): count
+                    for hour, count in stats['hourly_stats'].items()
                 },
-                "busiest_periods": [
-                    get_hour_range(hour) 
-                    for hour, data in sorted(
-                        stats['hourly_stats'].items(), 
-                        key=lambda x: x[1]['total_entries'], 
-                        reverse=True
-                    )[:3]
-                ]
+                "busiest_periods": sorted(
+                    [(get_hour_range(hour), count) 
+                     for hour, count in stats['hourly_stats'].items()],
+                    key=lambda x: x[1],
+                    reverse=True
+                )[:3]
             },
             "performance_metrics": {
                 "success_rate": round(
-                    stats['verification_stats']['both_success'] / stats['verification_stats']['total_attempts'] * 100 
-                    if stats['verification_stats']['total_attempts'] > 0 else 0, 2
+                    (total_success / total_entries * 100)
+                    if total_entries > 0 else 0, 2
                 ),
                 "face_verification_rate": round(
-                    stats['verification_stats']['face_success'] / stats['verification_stats']['total_attempts'] * 100
-                    if stats['verification_stats']['total_attempts'] > 0 else 0, 2
+                    (stats['verification_stats']['face_success'] / total_entries * 100)
+                    if total_entries > 0 else 0, 2
                 ),
                 "qr_verification_rate": round(
-                    stats['verification_stats']['qr_success'] / stats['verification_stats']['total_attempts'] * 100
-                    if stats['verification_stats']['total_attempts'] > 0 else 0, 2
-                ),
-                "bypass_rate": round(
-                    stats['entry_types']['bypass'] / total_entries * 100
+                    (stats['verification_stats']['qr_success'] / total_entries * 100)
                     if total_entries > 0 else 0, 2
+                ),
+                "group_success_rate": round(
+                    (group_success / total_group_entries * 100)
+                    if total_group_entries > 0 else 0, 2
                 )
             },
             "scan_efficiency": {
-                "average_completion_time_minutes": round(avg_completion_time, 2),
-                "recent_average_completion_time_minutes": round(avg_recent_completion_time, 2),
-                "recent_scans": recent_scans,
-                "total_valid_scans": len(stats['scan_completion_times']),
-                "completion_rate_within_3min": round(
-                    len(stats['scan_completion_times']) / stats['verification_stats']['total_attempts'] * 100
-                    if stats['verification_stats']['total_attempts'] > 0 else 0, 2
-                )
+                "average_completion_time_minutes": round(
+                    sum(entry['time'] for entry in stats['completion_times']) / 
+                    len(stats['completion_times'])
+                    if stats['completion_times'] else 0, 2
+                ),
+                "recent_average_completion_time_minutes": round(
+                    sum(entry['time'] for entry in stats['completion_times'][-10:]) / 
+                    len(stats['completion_times'][-10:])
+                    if stats['completion_times'][-10:] else 0, 2
+                ),
+                "recent_scans": [{
+                    'time': entry['time'],
+                    'date': entry['date'],
+                    'type': entry['type'],
+                    'verification_type': entry['verification_type']
+                } for entry in stats['completion_times'][-10:]],
+                "total_valid_scans": len(stats['completion_times']),
+                "completion_rate": round(
+                    (len(stats['completion_times']) / total_entries * 100)
+                    if total_entries > 0 else 0, 2
+                ),
+                "completion_time_distribution": {
+                    "under_1_minute": len([e for e in stats['completion_times'] if e['time'] <= 1]),
+                    "1_to_2_minutes": len([e for e in stats['completion_times'] if 1 < e['time'] <= 2]),
+                    "2_to_5_minutes": len([e for e in stats['completion_times'] if 2 < e['time'] <= 5])
+                }
             },
             "entry_statistics": {
                 "total_entries": total_entries,
-                "entry_types": stats['entry_types'],
-                "average_duration_minutes": round(avg_duration, 2),  # Changed to minutes
+                "entry_types": dict(stats['entry_types']),
+                "average_duration_minutes": round(
+                    sum(stats['duration_stats']) / len(stats['duration_stats'])
+                    if stats['duration_stats'] else 0, 2
+                ),
                 "daily_patterns": {
                     date: {
-                        "entries": data['entries'],
+                        "total_entries": data['entries'],
+                        "successful_entries": data['successes'],
                         "unique_users": len(data['unique_users']),
-                        "bypass_rate": round(
-                            data['bypass_count'] / data['entries'] * 100
+                        "group_entries": data['group_entries'],
+                        "success_rate": round(
+                            (data['successes'] / data['entries'] * 100)
                             if data['entries'] > 0 else 0, 2
                         )
                     }
                     for date, data in stats['daily_stats'].items()
-                }
-            },
-            "verification_summary": {
-                "total_attempts": stats['verification_stats']['total_attempts'],
-                "successful_verifications": stats['verification_stats']['both_success'],
-                "failed_verifications": stats['verification_stats']['failures'],
-                "verification_rates": {
-                    "face": round(
-                        stats['verification_stats']['face_success'] / stats['verification_stats']['total_attempts'] * 100
-                        if stats['verification_stats']['total_attempts'] > 0 else 0, 2
-                    ),
-                    "qr": round(
-                        stats['verification_stats']['qr_success'] / stats['verification_stats']['total_attempts'] * 100
-                        if stats['verification_stats']['total_attempts'] > 0 else 0, 2
-                    ),
-                    "both": round(
-                        stats['verification_stats']['both_success'] / stats['verification_stats']['total_attempts'] * 100
-                        if stats['verification_stats']['total_attempts'] > 0 else 0, 2
+                },
+                "ongoing_users": {
+                    "count": len(stats['ongoing_users']),
+                    "details": sorted(
+                        stats['ongoing_users'],
+                        key=lambda x: x['duration_so_far'],
+                        reverse=True
                     )
                 }
             }
@@ -367,7 +416,11 @@ def get_analytics_overview(
             'face_verified': 0,
             'qr_verified': 0,
             'both_verified': 0,
-            'total_entries': 0
+            'total_entries': 0,
+            'group_verifications': 0,
+            'group_verification_success': 0,
+            'instructor_verifications': 0,
+            'instructor_led_entries': 0
         }
 
         for record in db.query(models.FinalRecords).filter(*base_filters).all():
@@ -379,6 +432,12 @@ def get_analytics_overview(
                     verification_stats['qr_verified'] += 1
                 if log.get('face_verified') and log.get('qr_verified'):
                     verification_stats['both_verified'] += 1
+                if log.get('entry_type') == 'group':
+                    verification_stats['group_verifications'] += 1
+                    if log.get('face_verified') and (log.get('verified_by_instructor') or log.get('face_verified')):
+                        verification_stats['group_verification_success'] += 1
+                    if log.get('verified_by_instructor'):
+                        verification_stats['instructor_verifications'] += 1
 
         # User Type Analysis
         user_type_stats = db.query(
@@ -425,7 +484,19 @@ def get_analytics_overview(
             "entry_distribution": entry_distribution,
             "time_analysis": time_analysis,
             "daily_statistics": daily_stats,
-            "verification_statistics": verification_stats,
+            "verification_statistics": {
+                **verification_stats,
+                "group_verification_rate": round(
+                    verification_stats['group_verification_success'] / 
+                    verification_stats['group_verifications'] * 100
+                    if verification_stats['group_verifications'] > 0 else 0, 2
+                ),
+                "instructor_led_percentage": round(
+                    verification_stats['instructor_verifications'] / 
+                    verification_stats['total_entries'] * 100
+                    if verification_stats['total_entries'] > 0 else 0, 2
+                )
+            },
             "user_type_analysis": user_analysis
         }
 
@@ -474,6 +545,10 @@ def get_user_analytics(
                 
                 # Entry type counting
                 entry_type = log.get('entry_type', 'normal')
+                if not isinstance(entry_type, str):
+                    print(f"Warning: Invalid entry_type: {entry_type}")  # Debug print
+                    entry_type = 'normal'  # Default to normal if invalid
+                
                 entry_patterns['entry_types'][entry_type] += 1
                 
                 # Verification counting
@@ -594,15 +669,20 @@ def get_detailed_analytics(
 
                 # Entry type tracking
                 entry_type = log.get('entry_type', 'normal')
+                if not isinstance(entry_type, str):
+                    print(f"Warning: Invalid entry_type: {entry_type}")  # Debug print
+                    entry_type = 'normal'  # Default to normal if invalid
+                
                 if entry_type == 'normal':
                     entry_stats['normal_entries'] += 1
                 elif entry_type == 'bypass':
                     entry_stats['bypass_entries'] += 1
                     hourly_stats[hour]['bypass_entries'] += 1
                     daily_stats[date_str]['bypass_entries'] += 1
-
-                if log.get('group_entry'):
+                elif entry_type == 'group_entry':
                     entry_stats['group_entries'] += 1
+
+                print(f"Current entry_stats: {entry_stats}")  # Debug print
 
                 # Verification tracking
                 verification_stats['total_attempts'] += 1
@@ -738,7 +818,10 @@ def get_trend_analytics(
             'successful_entries': 0,
             'unique_users': set(),
             'bypass_count': 0,
-            'average_duration': []
+            'average_duration': [],
+            'group_entries': 0,
+            'successful_group_entries': 0,
+            'instructor_verifications': 0
         })
 
         # Process records for weekly trends
@@ -765,6 +848,13 @@ def get_trend_analytics(
                     duration = (departure_time - arrival_time).total_seconds()
                     weekly_stats[week_number]['average_duration'].append(duration)
 
+                if log.get('entry_type') == 'group':
+                    weekly_stats[week_number]['group_entries'] += 1
+                    if log.get('face_verified') and (log.get('verified_by_instructor') or log.get('face_verified')):
+                        weekly_stats[week_number]['successful_group_entries'] += 1
+                    if log.get('verified_by_instructor'):
+                        weekly_stats[week_number]['instructor_verifications'] += 1
+
         # Process weekly stats
         trend_analysis = {
             week: {
@@ -772,7 +862,12 @@ def get_trend_analytics(
                 'successful_entries': stats['successful_entries'],
                 'unique_users': len(stats['unique_users']),
                 'bypass_rate': round(stats['bypass_count'] / stats['total_entries'] * 100, 2) if stats['total_entries'] > 0 else 0,
-                'average_duration_seconds': round(sum(stats['average_duration']) / len(stats['average_duration']), 2) if stats['average_duration'] else 0
+                'average_duration_seconds': round(sum(stats['average_duration']) / len(stats['average_duration']), 2) if stats['average_duration'] else 0,
+                'group_entry_success_rate': round(
+                    stats['successful_group_entries'] / stats['group_entries'] * 100
+                    if stats['group_entries'] > 0 else 0, 2
+                ),
+                'instructor_verification_count': stats['instructor_verifications']
             }
             for week, stats in weekly_stats.items()
         }
@@ -786,7 +881,8 @@ def get_trend_analytics(
             "trend_indicators": {
                 "growth_rate": calculate_growth_rate(trend_analysis),
                 "peak_week": max(trend_analysis.items(), key=lambda x: x[1]['total_entries'])[0] if trend_analysis else None,
-                "efficiency_trend": calculate_efficiency_trend(trend_analysis)
+                "efficiency_trend": calculate_efficiency_trend(trend_analysis),
+                "group_verification_trend": calculate_group_verification_trend(trend_analysis)
             }
         }
 
@@ -813,6 +909,30 @@ def calculate_efficiency_trend(trend_data):
     ]
     
     avg_success_rate = sum(success_rates) / len(success_rates) if success_rates else 0
+    
+    if avg_success_rate >= 90:
+        return "Excellent"
+    elif avg_success_rate >= 75:
+        return "Good"
+    elif avg_success_rate >= 60:
+        return "Fair"
+    else:
+        return "Needs Improvement"
+
+def calculate_group_verification_trend(trend_data):
+    if not trend_data:
+        return "No data available"
+    
+    success_rates = [
+        stats['group_entry_success_rate']
+        for stats in trend_data.values()
+        if stats['group_entries'] > 0
+    ]
+    
+    if not success_rates:
+        return "No group entries recorded"
+    
+    avg_success_rate = sum(success_rates) / len(success_rates)
     
     if avg_success_rate >= 90:
         return "Excellent"

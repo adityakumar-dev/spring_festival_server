@@ -85,5 +85,5 @@ class FinalRecords(Base):
 
     __table_args__ = (
         # Ensure unique combination of user_id, entry_date, and attempt_number
-        UniqueConstraint('user_id', 'entry_date',  name='unique_daily_attempt'),
+        UniqueConstraint('user_id', 'entry_date'),
     )

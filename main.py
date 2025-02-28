@@ -21,7 +21,7 @@ firebase_admin.initialize_app(cred, {
     'databaseURL': 'https://visitor-management-bbd7c-default-rtdb.firebaseio.com/'
 })
 
-from routes import analytics, app_users_handler, face_recognition, institutions, qr, users
+from routes import analytics, app_users_handler, face_recognition, institutions, push_update, qr, users
 
 app = FastAPI()
 
@@ -55,6 +55,7 @@ app.include_router(face_recognition.router)
 # app.include_router(quick_register.router)
 app.include_router(app_users_handler.router, prefix="/app_users", tags=["app_users"])
 app.include_router(analytics.router, )
+app.include_router(push_update.router, )
 @app.get("/")
 async def check():
     return {True}

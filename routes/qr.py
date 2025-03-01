@@ -41,7 +41,7 @@ def scan_qr(
         # Use current_app_user instead of looking up app_user
         app_user_id = current_app_user.user_id
         app_user_email = current_app_user.email
-
+        # print
         # Validate user
         user = db.query(models.User).filter(models.User.user_id == user_id).first()
         if not user:

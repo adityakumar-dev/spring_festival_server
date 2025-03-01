@@ -82,13 +82,13 @@ async def create_app_user_endpoint(
             isCreated = firebase_controller.create_app_user(
                 user_name, user_password, user_email, unique_id_type, unique_id
             )
-            
+            print("credentials verified")
             if isCreated and isCreated.get('status'):
                 profile_picture_path = f"app_users/{user_name}_{profile_picture.filename}"
                 os.makedirs(os.path.dirname(profile_picture_path), exist_ok=True)
                 with open(profile_picture_path, "wb") as f:
                     f.write(await profile_picture.read())
-                
+                print("")
                 app_user = AppUsers(
                     name=user_name,
                     email=user_email,
@@ -96,11 +96,11 @@ async def create_app_user_endpoint(
                     unique_id=unique_id,
                     image_path=profile_picture_path
                 )
-                
+                print(app_user)
                 db.add(app_user)
                 db.commit()
                 db.refresh(app_user)
-                
+                print("User created")
                 # Generate initial API key
                 # api_key_data = SecurityHandler().login_user(db, app_user)
                 
@@ -113,7 +113,7 @@ async def create_app_user_endpoint(
                         "email": app_user.email,
                     }
                 }
-            
+            print("Failed")
             return {"status": False, "message": "User creation failed"}
         
         return {"status": False, "message": "Invalid admin credentials"}

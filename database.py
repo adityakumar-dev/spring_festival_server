@@ -1,10 +1,14 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-DATABASE_URL = "postgresql://admin@localhost:5432/guestdb"
+# Correcting the DATABASE_URL with the password included
+DATABASE_URL = "postgresql://admin:yourpassword@localhost:5432/guestdb"
 
-engine = create_engine(DATABASE_URL, connect_args={"password": "yourpassword"})
+# Creating the SQLAlchemy engine
+engine = create_engine(DATABASE_URL)
 
+# Session local to bind the engine for transactions
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
 
+# Base class for ORM models
+Base = declarative_base()

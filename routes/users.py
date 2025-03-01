@@ -284,46 +284,176 @@ def get_user(
 
 @router.post("/all")
 def get_all_users(
-    user_type: str = Query(None),  # "all", "individual", "instructor", "student", "quick"
+    user_type: str = Query(None),
     institution_id: int = Query(None),
     db: Session = Depends(get_db)
 ):
-    result = []
-    
-    # Get completed entries from FinalRecords
-    # completed_entries = db.query(models.FinalRecords).filter(
-    #     models.FinalRecords.entry_completed == True
-    # ).all().coun
-    
-    # Get regular users
-    query = db.query(models.User)
-    
-    if user_type == "instructor":
-        query = query.filter(models.User.is_instructor.is_(True))
-    elif user_type == "student":
-        query = query.filter(models.User.is_student.is_(True))
-    
-    if institution_id:
-        query = query.filter(models.User.institution_id == institution_id)
+    try:
+        current_date = datetime.now().date()
+        current_time = datetime.now()
+        
+        response = {
+            "all_users": [],
+            "instructors": [],
+            "students": [],
+            "quick_register_users": [],
+            "individual_guests": [],
+            "statistics": {
+                "total_users": 0,
+                "total_instructors": 0,
+                "total_students": 0,
+                "total_quick_register": 0,
+                "total_individual_guests": 0,
+            },
+            "today_statistics": {
+                "active_entries": 0,
+                "total_entries": 0,
+                "active_students": 0,
+                "active_instructors": 0,
+                "active_individual_guests": 0,
+                "active_quick_register": 0
+            },
+            "entry_types": {
+                "normal_entries": 0,
+                "group_entries": 0,
+                "bypass_entries": 0
+            }
+        }
+        
+        query = db.query(models.User)
+        if institution_id:
+            query = query.filter(models.User.institution_id == institution_id)
+        if user_type == "instructor":
+            query = query.filter(models.User.is_instructor.is_(True))
+        elif user_type == "student":
+            query = query.filter(models.User.is_student.is_(True))
+        
+        users = query.all()
 
-    users = query.all()
-    for user in users:
-        # Check if user has completed entry
-        count_of_entries = db.query(models.FinalRecords).count()
-        result.append({
-            "id": user.user_id,
-            "name": user.name,
-            "email": user.email,
-            "unique_id_type": user.unique_id_type,
-            "unique_id": user.unique_id,
-            "image_path": user.image_path,
-            "created_at": user.created_at,
-            "is_quick_register": user.is_quick_register,
-            "count_of_entries": count_of_entries,  # Add whether user has completed entry
-            **{k: getattr(user, k) for k in ["is_student", "is_instructor", "institution_id"]}
-        })
+        for user in users:
+            # Get today's records for the user
+            final_records = db.query(models.FinalRecords).filter(
+                models.FinalRecords.user_id == user.user_id,
+                models.FinalRecords.entry_date == current_date
+            ).all()
+            
+            # Initialize current entry details
+            current_entry = {
+                "is_active": False,
+                "entry_type": None,
+                "arrival_time": None,
+                "duration_minutes": 0,
+                "entry_id": None,
+                "face_verified": False,
+                "qr_verified": False,
+                "verified_by_instructor": False
+            }
+            
+            # Check if user is currently active
+            is_active = False
+            for record in final_records:
+                if record.time_logs:
+                    for log in record.time_logs:
+                        # Count entry types for today
+                        entry_type = log.get('entry_type', 'normal')
+                        if entry_type == 'normal':
+                            response["entry_types"]["normal_entries"] += 1
+                        elif entry_type == 'group_entry':
+                            response["entry_types"]["group_entries"] += 1
+                        elif entry_type == 'bypass':
+                            response["entry_types"]["bypass_entries"] += 1
+                        
+                        # Check if entry is active (has arrival but no departure)
+                        if log.get('arrival') and not log.get('departure'):
+                            is_active = True
+                            arrival_time = datetime.fromisoformat(log['arrival'])
+                            duration = (current_time - arrival_time).total_seconds() / 60
+                            
+                            # Update current entry details
+                            current_entry = {
+                                "is_active": True,
+                                "entry_type": entry_type,
+                                "arrival_time": log['arrival'],
+                                "duration_minutes": round(duration, 2),
+                                "entry_id": record.record_id,
+                                "face_verified": log.get('face_verified', False),
+                                "qr_verified": log.get('qr_verified', False),
+                                "verified_by_instructor": log.get('verified_by_instructor', False)
+                            }
+                            
+                            response["today_statistics"]["active_entries"] += 1
+                            
+                            # Count active entries by user type
+                            if user.is_student:
+                                response["today_statistics"]["active_students"] += 1
+                            elif user.is_instructor:
+                                response["today_statistics"]["active_instructors"] += 1
+                            elif user.is_quick_register:
+                                response["today_statistics"]["active_quick_register"] += 1
+                            else:
+                                response["today_statistics"]["active_individual_guests"] += 1
 
-    return result
+            # Create user data dictionary with current entry details
+            user_data = {
+                "id": user.user_id,
+                "name": user.name,
+                "email": user.email,
+                "unique_id_type": user.unique_id_type,
+                "unique_id": user.unique_id,
+                "image_path": user.image_path,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+                "is_quick_register": user.is_quick_register,
+                "is_student": user.is_student,
+                "is_instructor": user.is_instructor,
+                "institution_id": user.institution_id,
+                "entry_count": len(final_records),
+                "institution_name": user.institution.name if user.institution else None,
+                "current_entry": current_entry  # Add current entry details
+            }
+
+            # Add to appropriate lists and update statistics
+            response["all_users"].append(user_data)
+            
+            if user.is_instructor:
+                response["instructors"].append(user_data)
+                response["statistics"]["total_instructors"] += 1
+            elif user.is_student:
+                response["students"].append(user_data)
+                response["statistics"]["total_students"] += 1
+            elif user.is_quick_register:
+                response["quick_register_users"].append(user_data)
+                response["statistics"]["total_quick_register"] += 1
+            else:
+                response["individual_guests"].append(user_data)
+                response["statistics"]["total_individual_guests"] += 1
+
+            response["today_statistics"]["total_entries"] += sum(
+                len(record.time_logs) for record in final_records
+            )
+
+        response["statistics"]["total_users"] = len(users)
+
+        # Sort all lists by current_entry.is_active (active first) and then by created_at
+        for key in ["all_users", "instructors", "students", "quick_register_users", "individual_guests"]:
+            response[key] = sorted(
+                response[key],
+                key=lambda x: (not x["current_entry"]["is_active"], x["created_at"] if x["created_at"] else "0"),
+                reverse=False
+            )
+
+        return {
+            "status": "success",
+            "message": "Users fetched successfully",
+            "data": response,
+            "timestamp": current_time.isoformat()
+        }
+
+    except Exception as e:
+        print(f"Error fetching users: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error fetching users: {str(e)}"
+        )
 
 # from fastapi import Query
 

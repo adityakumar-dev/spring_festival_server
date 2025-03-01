@@ -214,7 +214,7 @@ async def group_entry(
             entry_date=current_time.date(),
             face_image_path=temp_image_path,
             app_user_id=app_user.user_id,
-            entries=[{
+            time_logs=[{
                 "arrival": current_time.isoformat(),
                 "departure": None,
                 "duration": None,
@@ -232,7 +232,7 @@ async def group_entry(
                 user_id=student.user_id,
                 entry_date=current_time.date(),
                 app_user_id=app_user.user_id,
-                entries=[{
+                time_logs=[{
                     "arrival": current_time.isoformat(),
                     "departure": None,
                     "duration": None,

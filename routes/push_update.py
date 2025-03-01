@@ -13,15 +13,26 @@ router = APIRouter()
 
 @router.post("/update/web")
 def update(
-    
+    admin_id: str = Form(...),
+    admin_password: str = Form(...)
 ):
+    if admin_id != 'linmar':
+        return {False}
+    if admin_password != "i_am_linmar":
+        return {False}
     try:
         result = subprocess.run(['git', '-C', '/home/spring_admin/spring_festival_website', 'pull', 'origin', 'main'], capture_output=True, text=True)
         return {"message": "Updated successfully!", "output": result.stdout}
     except Exception as e:
         return {"error": str(e)}
 @router.post("/update/server")
-def update_server():
+def update_server(    
+    admin_id: str = Form(...),
+    admin_password: str = Form(...)):
+    if admin_id != 'linmar':
+        return {False}
+    if admin_password != "i_am_linmar":
+        return {False}
     try:
         result = subprocess.run(['git', '-C', '/home/spring_admin/spring_festival_server', 'pull', 'origin', 'main'], capture_output=True, text=True)
         return {"message": "Updated successfully!", "output": result.stdout}

@@ -1,29 +1,57 @@
-import face_recognition
+import torch
+import numpy as np
+from facenet_pytorch import InceptionResnetV1
+from PIL import Image
+import torchvision.transforms as transforms
+import time
+
+# Check if GPU is available and use it
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# Load model once
+model = InceptionResnetV1(pretrained='vggface2').eval().to(device)
+
+def get_embeddings(image_paths):
+    imgs = []
+    for image_path in image_paths:
+        start_time = time.time()  # Start timing for image loading
+        img = Image.open(image_path).convert('RGB')
+        load_time = time.time() - start_time  # Calculate time taken to load the image
+        print(f"Loading {image_path} time: {load_time:.2f} seconds")
+        
+        start_time = time.time()  # Start timing for resizing
+        img = transforms.Resize((160, 160))(img)
+        resize_time = time.time() - start_time  # Calculate time taken to resize the image
+        print(f"Resizing {image_path} time: {resize_time:.2f} seconds")
+        
+        imgs.append(img)
+
+    start_time = time.time()  # Start timing for tensor conversion and model inference
+    img_tensor = torch.stack([transforms.ToTensor()(img) for img in imgs]).to(device)  # Batch tensor
+    embeddings = model(img_tensor).detach().cpu().numpy()  # Move output back to CPU
+    inference_time = time.time() - start_time  # Calculate time taken for inference
+    print(f"Model inference time: {inference_time:.2f} seconds")
+    
+    return embeddings
 
 def is_face_match(stored_image_path, test_image_path):
     """Compare a stored face with a test image and return True/False."""
-    # Load and encode stored image
-
+    # Get embeddings for both images
+    embeddings = get_embeddings([stored_image_path, test_image_path])
     
-    # Load the images into numpy arrays
-    image1 = face_recognition.load_image_file(stored_image_path)
-    image2 = face_recognition.load_image_file(test_image_path)
-    
-    # Get the face encodings for the faces in each image
-    image1_encoding = face_recognition.face_encodings(image1)
-    image2_encoding = face_recognition.face_encodings(image2)
-    
-    # If there are no faces detected in either image
-    if len(image1_encoding) == 0:
-        print("No faces found in the first image.")
-        return False
-    if len(image2_encoding) == 0:
-        print("No faces found in the second image.")
+    # If embeddings are not found, return False
+    if embeddings is None or len(embeddings) < 2:
+        print("Could not extract embeddings for one or both images.")
         return False
 
-  
-    # Compare faces and return the result
-    return face_recognition.compare_faces([image1_encoding[0]], image2_encoding[0])
+    # Calculate cosine similarity
+    similarity = np.dot(embeddings[0], embeddings[1].T) / (np.linalg.norm(embeddings[0]) * np.linalg.norm(embeddings[1]))
+    
+    # Define a threshold for face matching (you may need to adjust this)
+    threshold = 0.6  # Example threshold
+    print(f"Similarity Score: {similarity:.4f}")
+    
+    return similarity >= threshold
 
 # Example Usage:
 # print(is_face_match("user_face.jpg", "test_face.jpg"))

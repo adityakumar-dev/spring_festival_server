@@ -19,6 +19,7 @@ from fastapi import BackgroundTasks
 from pathlib import Path
 import mimetypes  # Add this import
 from utils.email_handler import send_welcome_email_background
+import pytz  # Import the pytz library
 
 router = APIRouter()
 
@@ -200,9 +201,18 @@ def get_user(
 
                 if record.time_logs:
                     for log in record.time_logs:
+                        # Convert UTC times to IST
+                        arrival_time = datetime.fromisoformat(log.get("arrival")) if log.get("arrival") else None
+                        departure_time = datetime.fromisoformat(log.get("departure")) if log.get("departure") else None
+
+                        if arrival_time:
+                            arrival_time = arrival_time.replace(tzinfo=pytz.UTC).astimezone(pytz.timezone('Asia/Kolkata'))
+                        if departure_time:
+                            departure_time = departure_time.replace(tzinfo=pytz.UTC).astimezone(pytz.timezone('Asia/Kolkata'))
+
                         entry = {
-                            "arrival": log.get("arrival"),
-                            "departure": log.get("departure"),
+                            "arrival": arrival_time.isoformat() if arrival_time else None,
+                            "departure": departure_time.isoformat() if departure_time else None,
                             "duration": log.get("duration"),
                             "entry_type": log.get("entry_type", "normal"),
                             "face_verified": log.get("face_verified", False),

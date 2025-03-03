@@ -379,43 +379,82 @@ async def group_entry(
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# # Scan QR Code (Insert Entry)
-# @router.post("/qr_scans/verify")
-# def scan_qr(user_id: int, db: Session = Depends(get_db)):
-#     try:
-#         user = db.query(models.User).filter(models.User.user_id == user_id).first()
-#         if user is None:
-#             return {"error": "User not found"}
-        
-#         # Check if user already has an arrival time for today
-#         from datetime import datetime
-#         today = datetime.now().date()
-#         existing_scan = db.query(models.QRScan).filter(
-#             models.QRScan.user_id == user_id,
-#             db.func.date(models.QRScan.arrival_time) == today
-#         ).first()
-        
-#         if existing_scan:
-#             return {"error": "User already checked in today"}
-        
-#         # Create new scan entry
-#         scan = models.QRScan(user_id=user_id)
-#         db.add(scan)
-#         db.commit()
-        
-#         # Return before refresh to avoid potential issues
-#         return {
-#             "message": "Check-in successful",
-#             "user_id": user_id,
-#             "arrival_time": scan.arrival_time
-#         }
-#     except Exception as e:
-#         db.rollback()  # Rollback any failed transaction
-#         print(f"Error in scan_qr: {str(e)}")  # Log the error
-#         return {"error": f"Internal server error: {str(e)}"}
+@router.post("/group_entry_bypass")
+async def group_entry_bypass(
+    user_id: int = Form(...),
+    student_ids: str = Form(...),
+    bypass_reason: str = Form(None),
+    current_app_user: models.AppUsers = Depends(get_current_app_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        # Validate instructor
+        instructor = db.query(models.User).filter(
+            models.User.user_id == user_id,
+            models.User.is_instructor == True
+        ).first()
 
-# Get QR Scan History
-# @router.get("/qr_scans/{user_id}")
-# def get_qr_history(user_id: int, db: Session = Depends(get_db)):
-#     return db.query(models.QRScan).filter(models.QRScan.user_id == user_id).all()
+        if not instructor:
+            raise HTTPException(status_code=403, detail="User is not an instructor")
+
+        if not instructor.institution_id:
+            raise HTTPException(status_code=400, detail="Instructor must be associated with an institution")
+
+        # Parse the JSON string to get list of student IDs
+        try:
+            student_ids = json.loads(student_ids)  # Parse the JSON string
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid student_ids format")
+        
+        # Validate student IDs
+        for student_id in student_ids:
+            student = db.query(models.User).filter(
+                models.User.user_id == student_id,
+                models.User.is_student == True
+            ).first()
+            if not student:
+                raise HTTPException(status_code=404, detail=f"Student with ID {student_id} not found")
+
+        # Create bypass entries for all students
+        for student_id in student_ids:
+            # Create a new bypass entry for the student
+            bypass_entry = {
+                "arrival": datetime.utcnow().isoformat(),
+                "departure": None,
+                "duration": None,
+                "entry_type": "bypass",
+                "qr_verified": True,
+                "qr_verification_time": datetime.utcnow().isoformat(),
+                "bypass_details": {
+                    "reason": bypass_reason or "No reason provided",
+                    "approved_by": current_app_user.user_id,
+                    "approved_at": datetime.utcnow().isoformat()
+                }
+            }
+
+            # Add the bypass entry to the student's record
+            student_record = db.query(models.FinalRecords).filter(
+                models.FinalRecords.user_id == student_id,
+                models.FinalRecords.entry_date == datetime.utcnow().date()
+            ).first()
+
+            if not student_record:
+                raise HTTPException(status_code=404, detail=f"No active entry found for student with ID {student_id}")
+
+            # Add the bypass entry to the student's record
+            student_record.time_logs.append(bypass_entry)
+            db.commit()
+            db.refresh(student_record)
+
+
+            # Log the bypass entry
+            firebase_controller.log_server_activity("INFO", f"Group entry bypass recorded for student_id: {student_id}")
+
+        return {
+            "status": "success",
+            "message": "Group entry bypass processed successfully"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 

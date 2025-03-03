@@ -28,7 +28,6 @@ async def verify_face(
             firebase_controller.log_face_verification(user_id, "Unknown", False)
             raise HTTPException(status_code=404, detail="User not found")
         
-      
         print(f"Found user with image_path: {user.image_path}")
         stored_image_path = user.image_path
         
@@ -57,6 +56,7 @@ async def verify_face(
             # Log the verification result
             firebase_controller.log_face_verification(user_id, user.name, bool(is_match))
             
+            # If face match is successful
             if is_match:
                 current_time = datetime.utcnow()
                 # Check for existing record for today
@@ -106,11 +106,15 @@ async def verify_face(
                     db.add(new_record)
                 db.commit()
                 firebase_controller.log_success(user_id, user.name, "Face matched")
+                
+                # Return a successful response
                 return {
                     "status": True, 
                     "message": "Face matched",
                     "verification_time": current_time.isoformat()
                 }
+
+            # If face did not match
             else:
                 firebase_controller.log_error(user_id, user.name, "Face did not match")
                 raise HTTPException(status_code=400, detail="Face did not match")
@@ -121,6 +125,7 @@ async def verify_face(
     except Exception as e:
         firebase_controller.log_face_verification(user_id, user.name if user else "Unknown", False)
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/face_recognition/group_entry")
 async def group_entry(

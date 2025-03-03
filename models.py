@@ -10,6 +10,9 @@ class Institution(Base):
     
     institution_id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
+    address = Column(String, nullable=False)
+    contact = Column(String, nullable=False)
+    email = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # One-to-many relationship with users

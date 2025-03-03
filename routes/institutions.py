@@ -6,14 +6,13 @@ import models
 router = APIRouter()
 
 @router.post("/")
-def add_institutions(name: str = Form(...), admin_name: str = Form(...), admin_password: str = Form(...), db: Session = Depends(get_db)):
-    if admin_name != "admin" or admin_password != "admin":
-        raise HTTPException(status_code=401, detail="Unauthorized")
+def add_institutions(name: str = Form(...),address: str = Form(...),contact: str = Form(...),email: str = Form(...),db: Session = Depends(get_db)):
+    print(name,address,contact,email)
     existing_institution = db.query(models.Institution).filter(models.Institution.name == name).first()
     if existing_institution:
         raise HTTPException(status_code=400, detail="Institution already exists")
 
-    new_institution = models.Institution(name=name)
+    new_institution = models.Institution(name=name,address=address,contact=contact,email=email)
     db.add(new_institution)
     db.commit()
     db.refresh(new_institution)

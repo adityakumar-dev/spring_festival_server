@@ -77,7 +77,7 @@ async def create_app_user_endpoint(
     db: Session = Depends(get_db)
 ):
     try:
-        if admin_name == "admin" and admin_password == "admin":
+        if admin_name == "admin" and admin_password == "future_scope":
             firebase_controller = FirebaseController()
             isCreated = firebase_controller.create_app_user(
                 user_name, user_password, user_email, unique_id_type, unique_id
@@ -133,5 +133,5 @@ def verify_user(user_name: str = Form(...), user_password: str = Form(...),api_k
 
 @router.post("/check/admin")
 def check_admin(admin_name: str = Form(...), admin_password: str = Form(...)):
-    is_admin = admin_name == "admin" and admin_password == "admin"
+    is_admin = admin_name == "admin" and admin_password == "future_scope"
     return { "status" : is_admin, "message" : "Admin verified" if is_admin else "Invalid admin credentials" }

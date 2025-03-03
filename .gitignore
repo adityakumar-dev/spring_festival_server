@@ -4,3 +4,4 @@ app_users/
 qrs/
 temp_images/
 generated_cards/
+__pycache__/

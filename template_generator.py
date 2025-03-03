@@ -58,7 +58,7 @@ class VisitorCardGenerator:
             draw.text(name_pos, user_data["name"], fill="black", font=font_name, stroke_width=2, stroke_fill="black")
             draw.text(email_pos, user_data["email"], fill="black", font=font_email)
             draw.text(id_pos, user_data["user_id"], fill="black", font=font_id, stroke_width=1, stroke_fill="black")
-            draw.text(valid_pos, "Valid Upto: 02-03-2025 --- 05-03-2025", fill="black", font=font_id)
+            draw.text(valid_pos, "Valid Upto: 07-03-2025 --- 09-03-2025", fill="black", font=font_id)
             
             # Save the card
             os.makedirs("generated_cards", exist_ok=True)

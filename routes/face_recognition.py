@@ -101,7 +101,7 @@ async def verify_face(
                     )
                     db.add(new_record)
                 db.commit()
-                firebase_controller.log_success(user_id, user.name, "Face matched")
+                # firebase_controller.log_success(user_id, user.name, "Face matched")
                 
                 # Return a successful response
                 return {
@@ -112,19 +112,29 @@ async def verify_face(
 
             # If face did not match
             else:
-                firebase_controller.log_error(user_id, user.name, "Face did not match")
+                print("face not matched")
+                # firebase_controller.log_error(user_id, user.name, "Face did not match")
                 raise HTTPException(status_code=400, detail="Face did not match")
         
         finally:
             # Clean up temporary file
-           
+            # print(is_match)
             print("face recognition route finished")
                 
     except Exception as e:
+        # print("is match" + is_match)
         # Only log if we haven't already logged the verification
-        if 'user' in locals() and user:
-            firebase_controller.log_face_verification(user_id, user.name, False)
-        raise HTTPException(status_code=500, detail=str(e))
+        # if 'user' in locals() and user:
+        #     firebase_controller.log_face_verification(user_id, user.name, False)
+        if is_match:
+            return {
+                    "status": True, 
+                    "message": "Face matched",
+                    "verification_time": current_time.isoformat()
+                }
+        else:
+
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/face_recognition/group_entry")

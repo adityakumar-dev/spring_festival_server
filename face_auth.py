@@ -1,7 +1,7 @@
-import torch
-import numpy as np
 from facenet_pytorch import InceptionResnetV1
 from PIL import Image
+import torch
+import numpy as np
 import torchvision.transforms as transforms
 import time
 

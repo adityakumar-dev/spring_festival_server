@@ -28,7 +28,6 @@ async def verify_face(
             firebase_controller.log_face_verification(user_id, "Unknown", False)
             raise HTTPException(status_code=404, detail="User not found")
         
-      
         print(f"Found user with image_path: {user.image_path}")
         stored_image_path = user.image_path
         
@@ -46,16 +45,12 @@ async def verify_face(
                 buffer.write(content)
             
             print("Calling face_match function")
-            # Debugging here to check return value of is_face_match
-            try:
-                is_match = is_face_match(stored_image_path, temp_image_path)
-                print(f"Face match result: {is_match}")  # Log result
-            except Exception as e:
-                print(f"Error in is_face_match: {str(e)}")
-                is_match = False  # Default to False if there’s an error
+            # Single face verification check
+            is_match = is_face_match(stored_image_path, temp_image_path)
+            print(f"Face match result: {is_match}")
             
-            # Log the verification result
-            firebase_controller.log_face_verification(user_id, user.name, bool(is_match))
+            # Log the verification result only once
+            firebase_controller.log_face_verification(user_id, user.name, is_match)
             
             if is_match:
                 current_time = datetime.utcnow()
@@ -116,10 +111,14 @@ async def verify_face(
                 raise HTTPException(status_code=400, detail="Face did not match")
         
         finally:
+            # Clean up temporary file
+           
             print("face recognition route finished")
                 
     except Exception as e:
-        firebase_controller.log_face_verification(user_id, user.name if user else "Unknown", False)
+        # Only log if we haven't already logged the verification
+        if 'user' in locals() and user:
+            firebase_controller.log_face_verification(user_id, user.name, False)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/face_recognition/group_entry")

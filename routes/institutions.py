@@ -6,19 +6,40 @@ import models
 router = APIRouter()
 
 @router.post("/")
-def add_institutions(name: str = Form(...),address: str = Form(...),contact: str = Form(...),email: str = Form(...),db: Session = Depends(get_db)):
-    print(name,address,contact,email)
+def add_institutions(
+    name: str = Form(...),
+    count: int = Form(...),
+    db: Session = Depends(get_db)
+):
+    # Debug: Print incoming data
+    print(f"Adding institution with name: {name} and count: {count}")
+
+    # Check if the institution already exists
     existing_institution = db.query(models.Institution).filter(models.Institution.name == name).first()
     if existing_institution:
         raise HTTPException(status_code=400, detail="Institution already exists")
 
-    new_institution = models.Institution(name=name,address=address,contact=contact,email=email)
-    db.add(new_institution)
-    db.commit()
-    db.refresh(new_institution)
+    # Create a new institution
+    new_institution = models.Institution(name=name, count=str(count))
     
-    return {"message": "Institution added successfully", "institution": new_institution}
+    # Add and commit the new institution to the database
+    db.add(new_institution)
+    try:
+        db.commit()
+        db.refresh(new_institution)
+    except Exception as e:
+        db.rollback()  # Rollback in case of error
+        print(f"Error adding institution: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to add institution")
 
+    return {
+        "message": "Institution added successfully",
+        "institution": {
+            "id": new_institution.institution_id,
+            "name": new_institution.name,
+            "count": new_institution.count
+        }
+    }
 @router.get("/")
 def get_institutions(db: Session = Depends(get_db)):
     print("Getting institutions")

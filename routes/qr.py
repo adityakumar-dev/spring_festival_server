@@ -27,10 +27,10 @@ async def save_image(image: UploadFile) -> str:
         buffer.write(content)
     
     return temp_image_path
-
 @router.post("/scan_qr")
 def scan_qr(
     user_id: int = Form(...),
+    is_group_entry: bool = Form(False),
     is_bypass: bool = Form(False),
     bypass_reason: str = Form(None),
     current_app_user: models.AppUsers = Depends(get_current_app_user),
@@ -40,18 +40,19 @@ def scan_qr(
         # Use current_app_user instead of looking up app_user
         app_user_id = current_app_user.user_id
         app_user_email = current_app_user.email
-        
+
+        # print
         # Validate user
         user = db.query(models.User).filter(models.User.user_id == user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Get the count of users associated with the instructor's institution
-        instructor_count = 0
-        if user.is_instructor and user.institution_id:
-            institute_data = db.query(models.Institution).filter(models.Institution.institution_id == user.institution_id).first()
-            instructor_count = institute_data.count
-            institute_name = institute_data.name
+        # Validate group entry
+        if is_group_entry:
+            if not user.is_instructor:
+                raise HTTPException(status_code=403, detail="Only instructors can perform group entry")
+            if not user.institution_id:
+                raise HTTPException(status_code=400, detail="Instructor must be associated with an institution")
 
         def create_time_log_entry(entry_type="normal"):
             entry = {
@@ -62,14 +63,14 @@ def scan_qr(
                 "qr_verified": True,
                 "qr_verification_time": datetime.utcnow().isoformat()
             }
-            
+
             if entry_type == "bypass":
                 entry["bypass_details"] = {
                     "reason": bypass_reason or "No reason provided",
                     "approved_by": app_user_id,
                     "approved_at": datetime.utcnow().isoformat()
                 }
-            
+
             return entry
 
         # Handle existing entry
@@ -82,7 +83,7 @@ def scan_qr(
             # Initialize time_logs if None
             if existing_entry.time_logs is None:
                 existing_entry.time_logs = []
-            
+
             # Check if last entry has departure time
             should_add_new_entry = True
             if existing_entry.time_logs:
@@ -140,14 +141,14 @@ def scan_qr(
                             "entry_type": "bypass" if is_bypass else "normal",
                             "arrival_time": datetime.utcnow().isoformat(),
                             "bypass_reason": bypass_reason if is_bypass else None,
-                            "institute_name": institute_name if user.is_instructor else None,
-                            "instructor_count": instructor_count if user.is_instructor else None  # Include instructor count
+                            "updated_entry": updated_entry
                         }
                     else:
                         raise HTTPException(
                             status_code=400, 
                             detail="Face verification is already completed. Please use departure section."
                         )
+
 
             if should_add_new_entry:
                 new_log = create_time_log_entry("bypass" if is_bypass else "normal")
@@ -166,24 +167,43 @@ def scan_qr(
             )
             db.add(new_record)
 
+            # Handle group entry
+            if is_group_entry and not is_bypass:
+                students = db.query(models.User).filter(
+                    models.User.is_student == True,
+                    models.User.institution_id == user.institution_id
+                ).all()
+
+                for student in students:
+                    if student.user_id != user_id:  # Skip the instructor
+                        student_record = models.FinalRecords(
+                            user_id=student.user_id,
+                            entry_date=datetime.utcnow().date(),
+                            time_logs=[{
+                                **create_time_log_entry("normal"),
+                                "group_entry": True,
+                                "instructor_id": user_id
+                            }],
+                            app_user_id=app_user_id
+                        )
+                        db.add(student_record)
+
         db.commit()
-        # firebase_controller.log_qr_scan(user_id, user.name, True, "Successful QR scan")
-        
+        firebase_controller.log_qr_scan(user_id, user.name, True, "Successful QR scan")
+
         return {
             "message": "Check-in successful",
             "user_id": user_id,
             "arrival_time": datetime.utcnow().isoformat(),
-            "entry_type": "bypass" if is_bypass else "normal",
-            "bypass_reason": bypass_reason if is_bypass else None,
-            "institute_name": institute_name,
-            "instructor_count": instructor_count  # Include instructor count
+            "entry_type": "bypass" if is_bypass else "group" if is_group_entry else "normal",
+            "bypass_reason": bypass_reason if is_bypass else None
         }
-        
+
     except Exception as e:
         db.rollback()
-        # firebase_controller.log_server_activity("ERROR", f"Error processing QR scan for user_id: {user_id} - {str(e)}")
+        firebase_controller.log_server_activity("ERROR", f"Error processing QR scan for user_id: {user_id} - {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
-
+    
 @router.post("/departure")
 def departure(
     user_id: int = Form(...),

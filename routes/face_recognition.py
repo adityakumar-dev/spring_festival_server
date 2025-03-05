@@ -14,7 +14,6 @@ UPLOAD_DIR = "uploads"
 @router.post("/face_recognition/verify")
 async def verify_face(
     user_id: int = Form(...),
-    # count: int = Form(None),
     api_key: str = Header(...),
     image: UploadFile = File(...),
     db: Session = Depends(get_db)
@@ -63,14 +62,14 @@ async def verify_face(
 
                 if existing_record:
                     # Update the latest time_log entry with face verification
-                    if existing_record.time_logs and existing_record.time_logs[-1].get('departure') is None:
+                    if existing_record.time_logs:
                         latest_entry = existing_record.time_logs[-1]
+                        # Always update the latest entry, regardless of departure
                         latest_entry.update({
                             "face_verified": True,
                             "face_verification_time": current_time.isoformat(),
                             "face_image_path": temp_image_path,
-                            "verified_by": app_user.user_id,
-                            # "count": count if user.institute_id != None else None
+                            "verified_by": app_user.user_id
                         })
                         existing_record.time_logs[-1] = latest_entry
                         
@@ -82,6 +81,7 @@ async def verify_face(
                             "time_logs": existing_record.time_logs,
                             "verified_by": app_user.user_id
                         })
+                        db.commit()
                 else:
                     # Create new record with face verification
                     new_record = models.FinalRecords(
@@ -97,43 +97,42 @@ async def verify_face(
                             "face_verified": True,
                             "face_verification_time": current_time.isoformat(),
                             "face_image_path": temp_image_path,
-                            "verified_by": app_user.user_id,
-                            # "count": count if user.institute_id != None else None
+                            "verified_by": app_user.user_id
                         }]
                     )
                     db.add(new_record)
-
-                # Get the count of users associated with the instructor's institution
-                # instructor_count = db.query(models.Institution).filter(models.Institution.institution_id == user.institution_id).first().count or 0
-
                 db.commit()
+                # firebase_controller.log_success(user_id, user.name, "Face matched")
                 
-                # Return a successful response with instructor count
+                # Return a successful response
                 return {
                     "status": True, 
                     "message": "Face matched",
-                    "verification_time": current_time.isoformat(),
-                    # "count": count if user.institute_id != None else None  # Include instructor count
+                    "verification_time": current_time.isoformat()
                 }
 
             # If face did not match
             else:
-                print("Face not matched")
+                print("face not matched")
+                # firebase_controller.log_error(user_id, user.name, "Face did not match")
                 raise HTTPException(status_code=400, detail="Face did not match")
         
         finally:
-            print("Face recognition route finished")
+            # Clean up temporary file
+            # print(is_match)
+            print("face recognition route finished")
                 
     except Exception as e:
+        # print("is match" + is_match)
+        # Only log if we haven't already logged the verification
+        # if 'user' in locals() and user:
+        #     firebase_controller.log_face_verification(user_id, user.name, False)
         if is_match:
             return {
-                "status": True, 
-                "message": "Face matched",
-                "verification_time": current_time.isoformat(),
-                # "count": count if user.institute_id != None else None  # Include instructor count
-            }
-        else:   
-            db.rollback()
-            firebase_controller.log_server_activity("ERROR", f"Error processing face verification for user_id: {user_id} - {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+                    "status": True, 
+                    "message": "Face matched",
+                    "verification_time": current_time.isoformat()
+                }
+        else:
 
+            raise HTTPException(status_code=500, detail=str(e))

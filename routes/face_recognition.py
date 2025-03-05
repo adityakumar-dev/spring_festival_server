@@ -25,7 +25,7 @@ async def verify_face(
         os.makedirs("temp_images", exist_ok=True)
         user = db.query(models.User).filter(models.User.user_id == user_id).first()
         if not user:
-            firebase_controller.log_face_verification(user_id, "Unknown", False)
+            # firebase_controller.log_face_verification(user_id, "Unknown", False)
             raise HTTPException(status_code=404, detail="User not found")
         
         print(f"Found user with image_path: {user.image_path}")
@@ -50,7 +50,7 @@ async def verify_face(
             print(f"Face match result: {is_match}")
             
             # Log the verification result only once
-            firebase_controller.log_face_verification(user_id, user.name, is_match)
+            # firebase_controller.log_face_verification(user_id, user.name, is_match)
             
             if is_match:
                 current_time = datetime.utcnow()

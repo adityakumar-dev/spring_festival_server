@@ -73,6 +73,7 @@ def get_analytics(
                 'total_attempts': 0,
                 'face_success': 0,
                 'qr_success': 0,
+                'both_success': 0,
                 'failures': 0
             },
             'entry_types': defaultdict(int),

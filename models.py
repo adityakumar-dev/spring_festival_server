@@ -9,7 +9,7 @@ class Institution(Base):
     __tablename__ = "institutions"
     
     institution_id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
+    name = Column(String, nullable=False,unique=False)
     count = Column(String, nullable=False)
 
     # One-to-many relationship with users

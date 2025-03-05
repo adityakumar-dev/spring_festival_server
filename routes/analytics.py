@@ -157,13 +157,12 @@ def get_analytics(
                     arrival_utc = convert_to_system_time(arrival)
                     
                     completion_time = 1.0  # Set default 1 minute for normal entries
-                    # verification_type = 'normal'
                     
                     stats['completion_times'].append({
                         'time': round(completion_time, 2),
                         'date': arrival_utc.date().isoformat(),
                         'type': entry_type,
-                        # 'verification_type': verification_type
+                        'verification_type': 'normal'  # Ensure verification_type is defined
                     })
 
                 # Calculate duration if available

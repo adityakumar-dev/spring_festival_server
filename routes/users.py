@@ -233,8 +233,7 @@ def get_user(
             # Get the count of users associated with the instructor's institution
             institute_data = db.query(models.Institution).filter(models.Institution.institution_id == user.institution_id).first()
             count = institute_data.count if institute_data else 0
-            count = institute_data.count or 0
-            name = institute_data.name or "Unknown"
+            name = institute_data.name if institute_data else "Unknown"
             response_data = {
                 "user": {
                     "user_id": user.user_id,

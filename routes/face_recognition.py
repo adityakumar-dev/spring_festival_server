@@ -14,7 +14,7 @@ UPLOAD_DIR = "uploads"
 @router.post("/face_recognition/verify")
 async def verify_face(
     user_id: int = Form(...),
-    count: int = Form(None),
+    # count: int = Form(None),
     api_key: str = Header(...),
     image: UploadFile = File(...),
     db: Session = Depends(get_db)
@@ -70,7 +70,7 @@ async def verify_face(
                             "face_verification_time": current_time.isoformat(),
                             "face_image_path": temp_image_path,
                             "verified_by": app_user.user_id,
-                            "count": count if user.institute_id != None else None
+                            # "count": count if user.institute_id != None else None
                         })
                         existing_record.time_logs[-1] = latest_entry
                         
@@ -98,7 +98,7 @@ async def verify_face(
                             "face_verification_time": current_time.isoformat(),
                             "face_image_path": temp_image_path,
                             "verified_by": app_user.user_id,
-                            "count": count if user.institute_id != None else None
+                            # "count": count if user.institute_id != None else None
                         }]
                     )
                     db.add(new_record)
@@ -113,7 +113,7 @@ async def verify_face(
                     "status": True, 
                     "message": "Face matched",
                     "verification_time": current_time.isoformat(),
-                    "count": count if user.institute_id != None else None  # Include instructor count
+                    # "count": count if user.institute_id != None else None  # Include instructor count
                 }
 
             # If face did not match
@@ -130,7 +130,7 @@ async def verify_face(
                 "status": True, 
                 "message": "Face matched",
                 "verification_time": current_time.isoformat(),
-                "count": count if user.institute_id != None else None  # Include instructor count
+                # "count": count if user.institute_id != None else None  # Include instructor count
             }
         else:   
             db.rollback()

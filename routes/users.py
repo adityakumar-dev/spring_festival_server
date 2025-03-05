@@ -172,7 +172,7 @@ def create_user(
 @router.get("/{user_id}")
 def get_user(
     user_id: int,
-    api_key: str = Header(None),
+    # api_key: str = Header(None),
     db: Session = Depends(get_db)
 ):
     try:
@@ -232,6 +232,7 @@ def get_user(
 
             # Get the count of users associated with the instructor's institution
             institute_data = db.query(models.Institution).filter(models.Institution.institution_id == user.institution_id).first()
+            count = institute_data.count if institute_data else 0
             count = institute_data.count or 0
             name = institute_data.name or "Unknown"
             response_data = {

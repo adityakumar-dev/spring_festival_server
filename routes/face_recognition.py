@@ -88,6 +88,7 @@ async def verify_face(
                     existing_record.time_logs = updated_time_logs
                     existing_record.verified_by = app_user.user_id
                     db.flush()
+                    db.commit()
                 else:
                     # Create a new record if none exists for today
                     new_record = models.FinalRecords(
@@ -122,8 +123,8 @@ async def verify_face(
         
         finally:
             print("Face recognition route finished")
-            if os.path.exists(temp_image_path):
-                os.remove(temp_image_path)  # Clean up temporary file
+            # if os.path.exists(temp_image_path):
+            #     os.remove(temp_image_path)  # Clean up temporary file
                 
     except Exception as e:
         print(f"Error occurred: {str(e)}")

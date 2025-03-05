@@ -74,10 +74,10 @@ def create_user(
             raise HTTPException(status_code=400, detail="User already exists with this email")
         
         # Institution validation
-        if user_type in ["student", "instructor"]:
+        if user_type in ["instructor"]:
             if institution_id is None:
-                firebase_controller.log_server_activity("ERROR", "Institution ID is required for student/instructor")
-                raise HTTPException(status_code=400, detail="Institution ID is required for student/instructor")
+                firebase_controller.log_server_activity("ERROR", "Institution ID is required for instructor")
+                raise HTTPException(status_code=400, detail="Institution ID is required for instructor")
             
             institution = db.query(models.Institution).filter(models.Institution.institution_id == institution_id).first()
             if not institution:
@@ -97,7 +97,6 @@ def create_user(
             name=name,
             email=email,
             image_path=image_path,
-            is_student=(user_type == "student"),
             is_instructor=(user_type == "instructor"),
             institution_id=institution_id,
             is_quick_register=is_quick_register,
@@ -122,7 +121,7 @@ def create_user(
         firebase_controller.log_user_creation(
             new_user.user_id,
             new_user.name,
-            "instructor" if new_user.is_instructor else "student"
+            "instructor"
         )
         
         # After successful user creation, generate visitor card
@@ -158,7 +157,6 @@ def create_user(
                 "url": f"/static/visitor_cards/{card_path.split('/')[-1]}" if card_path else None,
                 "generated_at": str(datetime.now())
             },
-            "is_student": new_user.is_student,
             "is_instructor": new_user.is_instructor,
             "institution_id": new_user.institution_id,
             "unique_id_type": new_user.unique_id_type,
@@ -232,6 +230,10 @@ def get_user(
 
                 processed_records.append(entry_data)
 
+            # Get the count of users associated with the instructor's institution
+            institute_data = db.query(models.Institution).filter(models.Institution.institution_id == user.institution_id).first()
+            count = institute_data.count or 0
+            name = institute_data.name or "Unknown"
             response_data = {
                 "user": {
                     "user_id": user.user_id,
@@ -245,6 +247,8 @@ def get_user(
                     "unique_id_type": user.unique_id_type,
                     "unique_id": user.unique_id,
                     "created_at": user.created_at.isoformat() if user.created_at else None,
+                    "group_count": count,
+                    "group_name": name
                 },
                 "entry_records": processed_records,
                 "summary": {
@@ -305,20 +309,17 @@ def get_all_users(
         response = {
             "all_users": [],
             "instructors": [],
-            "students": [],
             "quick_register_users": [],
             "individual_guests": [],
             "statistics": {
                 "total_users": 0,
                 "total_instructors": 0,
-                "total_students": 0,
                 "total_quick_register": 0,
                 "total_individual_guests": 0,
             },
             "today_statistics": {
                 "active_entries": 0,
                 "total_entries": 0,
-                "active_students": 0,
                 "active_instructors": 0,
                 "active_individual_guests": 0,
                 "active_quick_register": 0
@@ -335,9 +336,10 @@ def get_all_users(
             query = query.filter(models.User.institution_id == institution_id)
         if user_type == "instructor":
             query = query.filter(models.User.is_instructor.is_(True))
-        elif user_type == "student":
-            query = query.filter(models.User.is_student.is_(True))
-        
+            institution_id = query.first().institution_id
+            count = db.query(models.Institution).filter(models.Institution.institution_id == institution_id).first().count
+            response["statistics"]["group_count"] = count
+
         users = query.all()
 
         for user in users:
@@ -394,9 +396,7 @@ def get_all_users(
                             response["today_statistics"]["active_entries"] += 1
                             
                             # Count active entries by user type
-                            if user.is_student:
-                                response["today_statistics"]["active_students"] += 1
-                            elif user.is_instructor:
+                            if user.is_instructor:
                                 response["today_statistics"]["active_instructors"] += 1
                             elif user.is_quick_register:
                                 response["today_statistics"]["active_quick_register"] += 1
@@ -413,7 +413,6 @@ def get_all_users(
                 "image_path": user.image_path,
                 "created_at": user.created_at.isoformat() if user.created_at else None,
                 "is_quick_register": user.is_quick_register,
-                "is_student": user.is_student,
                 "is_instructor": user.is_instructor,
                 "institution_id": user.institution_id,
                 "entry_count": len(final_records),
@@ -427,9 +426,6 @@ def get_all_users(
             if user.is_instructor:
                 response["instructors"].append(user_data)
                 response["statistics"]["total_instructors"] += 1
-            elif user.is_student:
-                response["students"].append(user_data)
-                response["statistics"]["total_students"] += 1
             elif user.is_quick_register:
                 response["quick_register_users"].append(user_data)
                 response["statistics"]["total_quick_register"] += 1
@@ -444,7 +440,7 @@ def get_all_users(
         response["statistics"]["total_users"] = len(users)
 
         # Sort all lists by current_entry.is_active (active first) and then by created_at
-        for key in ["all_users", "instructors", "students", "quick_register_users", "individual_guests"]:
+        for key in ["all_users", "instructors", "quick_register_users", "individual_guests"]:
             response[key] = sorted(
                 response[key],
                 key=lambda x: (not x["current_entry"]["is_active"], x["created_at"] if x["created_at"] else "0"),

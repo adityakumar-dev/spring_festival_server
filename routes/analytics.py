@@ -73,8 +73,6 @@ def get_analytics(
                 'total_attempts': 0,
                 'face_success': 0,
                 'qr_success': 0,
-                'both_success': 0,
-                'group_success': 0,
                 'failures': 0
             },
             'entry_types': defaultdict(int),
@@ -82,12 +80,9 @@ def get_analytics(
                 'entries': 0,
                 'successes': 0,
                 'unique_users': set(),
-                'group_entries': 0,
-                'group_successes': 0
             }),
             'completion_times': [],
             'duration_stats': [],
-            'ongoing_users': []
         }
 
         # Process records
@@ -121,7 +116,7 @@ def get_analytics(
                 print(f"Instructor verified: {log.get('verified_by_instructor')}")
 
                 # Check face verification - Include both direct face verification and instructor verification
-                if log.get('face_verified') is True or (entry_type == 'group_entry' and log.get('verified_by_instructor') is True):
+                if log.get('face_verified') is True:
                     stats['verification_stats']['face_success'] += 1
                     print(f"Face verification counted. Total face success: {stats['verification_stats']['face_success']}")
 
@@ -131,19 +126,10 @@ def get_analytics(
                     print(f"QR verification counted. Total QR success: {stats['verification_stats']['qr_success']}")
 
                 # Determine overall success
-                if entry_type == 'group_entry':
-                    # Group entry is successful if verified by instructor OR face verified
-                    if log.get('verified_by_instructor') is True or log.get('face_verified') is True:
-                        is_success = True
-                        stats['verification_stats']['group_success'] += 1
-                        stats['verification_stats']['both_success'] += 1
-                        print("Group entry success counted")
-                else:
-                    # Normal entry is successful if both face AND QR are verified
-                    if log.get('face_verified') is True and log.get('qr_verified') is True:
-                        is_success = True
-                        stats['verification_stats']['both_success'] += 1
-                        print("Normal entry success counted")
+                if log.get('face_verified') is True and log.get('qr_verified') is True:
+                    is_success = True
+                    stats['verification_stats']['both_success'] += 1
+                    print("Normal entry success counted")
 
                 # Update success counters
                 if is_success:
@@ -159,52 +145,24 @@ def get_analytics(
                 print(f"Face successes: {stats['verification_stats']['face_success']}")
                 print(f"QR successes: {stats['verification_stats']['qr_success']}")
                 print(f"Overall successes: {stats['verification_stats']['both_success']}")
-                print(f"Group successes: {stats['verification_stats']['group_success']}")
-                print(f"Failures: {stats['verification_stats']['failures']}")
 
                 # Update daily statistics
                 stats['daily_stats'][date_str]['entries'] += 1
                 stats['daily_stats'][date_str]['unique_users'].add(record.user_id)
-                if entry_type == 'group_entry':
-                    stats['daily_stats'][date_str]['group_entries'] += 1
 
                 # Calculate completion time with improved logic
                 if log.get('arrival'):
                     arrival = datetime.fromisoformat(log['arrival'])
                     arrival_utc = convert_to_system_time(arrival)
                     
-                    if entry_type == 'group_entry':
-                        completion_time = 0.5  # Set default 30 seconds for group entries
-                        verification_type = 'instructor' if log.get('verified_by_instructor') else 'normal'
-                    else:
-                        # For normal entries
-                        if log.get('face_verification_time'):
-                            verification_time = convert_to_system_time(
-                                datetime.fromisoformat(log['face_verification_time'])
-                            )
-                            completion_time = (verification_time - arrival_utc).total_seconds() / 60
-                        else:
-                            completion_time = 1.0  # Set default 1 minute for normal entries
-                        verification_type = 'normal'
+                    completion_time = 1.0  # Set default 1 minute for normal entries
+                    verification_type = 'normal'
                     
                     stats['completion_times'].append({
                         'time': round(completion_time, 2),
                         'date': arrival_utc.date().isoformat(),
                         'type': entry_type,
                         'verification_type': verification_type
-                    })
-
-                # Track ongoing users (no departure time)
-                current_time = get_current_time()
-                if log.get('arrival') and not log.get('departure'):
-                    arrival_time = convert_to_system_time(datetime.fromisoformat(log['arrival']))
-                    duration_so_far = (current_time - arrival_time).total_seconds() / 60
-                    
-                    stats['ongoing_users'].append({
-                        'user_id': record.user_id,
-                        'arrival_time': arrival_time.isoformat(),
-                        'duration_so_far': round(duration_so_far, 2),
-                        'entry_type': entry_type
                     })
 
                 # Calculate duration if available
@@ -218,8 +176,6 @@ def get_analytics(
         # Calculate derived metrics
         total_entries = stats['verification_stats']['total_attempts']
         total_success = stats['verification_stats']['both_success']
-        total_group_entries = stats['entry_types'].get('group_entry', 0)
-        group_success = stats['verification_stats'].get('group_success', 0)
 
         # Debug final calculations
         print(f"\nFinal calculations:")
@@ -263,10 +219,6 @@ def get_analytics(
                     (stats['verification_stats']['qr_success'] / total_entries * 100)
                     if total_entries > 0 else 0, 2
                 ),
-                "group_success_rate": round(
-                    (group_success / total_group_entries * 100)
-                    if total_group_entries > 0 else 0, 2
-                )
             },
             "scan_efficiency": {
                 "average_completion_time_minutes": round(
@@ -308,7 +260,6 @@ def get_analytics(
                         "total_entries": data['entries'],
                         "successful_entries": data['successes'],
                         "unique_users": len(data['unique_users']),
-                        "group_entries": data['group_entries'],
                         "success_rate": round(
                             (data['successes'] / data['entries'] * 100)
                             if data['entries'] > 0 else 0, 2
@@ -316,14 +267,6 @@ def get_analytics(
                     }
                     for date, data in stats['daily_stats'].items()
                 },
-                "ongoing_users": {
-                    "count": len(stats['ongoing_users']),
-                    "details": sorted(
-                        stats['ongoing_users'],
-                        key=lambda x: x['duration_so_far'],
-                        reverse=True
-                    )
-                }
             }
         }
 
@@ -417,8 +360,6 @@ def get_analytics_overview(
             'qr_verified': 0,
             'both_verified': 0,
             'total_entries': 0,
-            'group_verifications': 0,
-            'group_verification_success': 0,
             'instructor_verifications': 0,
             'instructor_led_entries': 0
         }
@@ -432,12 +373,8 @@ def get_analytics_overview(
                     verification_stats['qr_verified'] += 1
                 if log.get('face_verified') and log.get('qr_verified'):
                     verification_stats['both_verified'] += 1
-                if log.get('entry_type') == 'group':
-                    verification_stats['group_verifications'] += 1
-                    if log.get('face_verified') and (log.get('verified_by_instructor') or log.get('face_verified')):
-                        verification_stats['group_verification_success'] += 1
-                    if log.get('verified_by_instructor'):
-                        verification_stats['instructor_verifications'] += 1
+                if log.get('verified_by_instructor'):
+                    verification_stats['instructor_verifications'] += 1
 
         # User Type Analysis
         user_type_stats = db.query(
@@ -486,11 +423,6 @@ def get_analytics_overview(
             "daily_statistics": daily_stats,
             "verification_statistics": {
                 **verification_stats,
-                "group_verification_rate": round(
-                    verification_stats['group_verification_success'] / 
-                    verification_stats['group_verifications'] * 100
-                    if verification_stats['group_verifications'] > 0 else 0, 2
-                ),
                 "instructor_led_percentage": round(
                     verification_stats['instructor_verifications'] / 
                     verification_stats['total_entries'] * 100
@@ -642,7 +574,6 @@ def get_detailed_analytics(
             'total_entries': 0,
             'normal_entries': 0,
             'bypass_entries': 0,
-            'group_entries': 0,
             'completed_entries': 0,
             'incomplete_entries': 0
         }
@@ -679,8 +610,6 @@ def get_detailed_analytics(
                     entry_stats['bypass_entries'] += 1
                     hourly_stats[hour]['bypass_entries'] += 1
                     daily_stats[date_str]['bypass_entries'] += 1
-                elif entry_type == 'group_entry':
-                    entry_stats['group_entries'] += 1
 
                 print(f"Current entry_stats: {entry_stats}")  # Debug print
 
@@ -847,13 +776,6 @@ def get_trend_analytics(
                     departure_time = datetime.fromisoformat(log['departure'])
                     duration = (departure_time - arrival_time).total_seconds()
                     weekly_stats[week_number]['average_duration'].append(duration)
-
-                if log.get('entry_type') == 'group':
-                    weekly_stats[week_number]['group_entries'] += 1
-                    if log.get('face_verified') and (log.get('verified_by_instructor') or log.get('face_verified')):
-                        weekly_stats[week_number]['successful_group_entries'] += 1
-                    if log.get('verified_by_instructor'):
-                        weekly_stats[week_number]['instructor_verifications'] += 1
 
         # Process weekly stats
         trend_analysis = {

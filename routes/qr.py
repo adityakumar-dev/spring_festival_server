@@ -31,7 +31,6 @@ async def save_image(image: UploadFile) -> str:
 @router.post("/scan_qr")
 def scan_qr(
     user_id: int = Form(...),
-    is_group_entry: bool = Form(False),
     is_bypass: bool = Form(False),
     bypass_reason: str = Form(None),
     current_app_user: models.AppUsers = Depends(get_current_app_user),
@@ -41,18 +40,18 @@ def scan_qr(
         # Use current_app_user instead of looking up app_user
         app_user_id = current_app_user.user_id
         app_user_email = current_app_user.email
-        # print
+        
         # Validate user
         user = db.query(models.User).filter(models.User.user_id == user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Validate group entry
-        if is_group_entry:
-            if not user.is_instructor:
-                raise HTTPException(status_code=403, detail="Only instructors can perform group entry")
-            if not user.institution_id:
-                raise HTTPException(status_code=400, detail="Instructor must be associated with an institution")
+        # Get the count of users associated with the instructor's institution
+        instructor_count = 0
+        if user.is_instructor and user.institution_id:
+            institute_data = db.query(models.Institution).filter(models.Institution.institution_id == user.institution_id).first()
+            instructor_count = institute_data.count
+            institute_name = institute_data.name
 
         def create_time_log_entry(entry_type="normal"):
             entry = {
@@ -141,7 +140,8 @@ def scan_qr(
                             "entry_type": "bypass" if is_bypass else "normal",
                             "arrival_time": datetime.utcnow().isoformat(),
                             "bypass_reason": bypass_reason if is_bypass else None,
-                            "updated_entry": updated_entry
+                            "institute_name": institute_name if user.is_instructor else None,
+                            "instructor_count": instructor_count if user.is_instructor else None  # Include instructor count
                         }
                     else:
                         raise HTTPException(
@@ -149,7 +149,6 @@ def scan_qr(
                             detail="Face verification is already completed. Please use departure section."
                         )
 
-            
             if should_add_new_entry:
                 new_log = create_time_log_entry("bypass" if is_bypass else "normal")
                 # Create a new list with existing logs plus new log
@@ -167,27 +166,6 @@ def scan_qr(
             )
             db.add(new_record)
 
-            # Handle group entry
-            if is_group_entry and not is_bypass:
-                students = db.query(models.User).filter(
-                    models.User.is_student == True,
-                    models.User.institution_id == user.institution_id
-                ).all()
-                
-                for student in students:
-                    if student.user_id != user_id:  # Skip the instructor
-                        student_record = models.FinalRecords(
-                            user_id=student.user_id,
-                            entry_date=datetime.utcnow().date(),
-                            time_logs=[{
-                                **create_time_log_entry("normal"),
-                                "group_entry": True,
-                                "instructor_id": user_id
-                            }],
-                            app_user_id=app_user_id
-                        )
-                        db.add(student_record)
-
         db.commit()
         firebase_controller.log_qr_scan(user_id, user.name, True, "Successful QR scan")
         
@@ -195,8 +173,10 @@ def scan_qr(
             "message": "Check-in successful",
             "user_id": user_id,
             "arrival_time": datetime.utcnow().isoformat(),
-            "entry_type": "bypass" if is_bypass else "group" if is_group_entry else "normal",
-            "bypass_reason": bypass_reason if is_bypass else None
+            "entry_type": "bypass" if is_bypass else "normal",
+            "bypass_reason": bypass_reason if is_bypass else None,
+            "institute_name": institute_name,
+            "instructor_count": instructor_count  # Include instructor count
         }
         
     except Exception as e:
@@ -218,18 +198,10 @@ def departure(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Process departure for instructor and their students
+        # Process departure for instructor only
         if user.is_instructor and user.institution_id:
-            # Get all students from the same institution
-            students = db.query(models.User).filter(
-                models.User.is_student == True,
-                models.User.institution_id == user.institution_id
-            ).all()
-            
-            successful_departures = []
-            skipped_students = []
-            
             # Try to process instructor's departure first
+            successful_departures = []
             try:
                 result = process_single_departure(user.user_id, app_user_id, db)
                 successful_departures.append({
@@ -239,41 +211,22 @@ def departure(
                 })
             except HTTPException as he:
                 if he.status_code == 400 and "already has departure time" in str(he.detail):
-                    # Instructor already checked out, continue with students
+                    # Instructor already checked out
                     pass
                 elif he.status_code == 404:
-                    # No active entry for instructor, continue with students
+                    # No active entry for instructor
                     pass
-            
-            # Process departure for all students
-            for student in students:
-                try:
-                    result = process_single_departure(student.user_id, app_user_id, db)
-                    successful_departures.append({
-                        "user_id": student.user_id,
-                        "name": student.name,
-                        "departure_time": result["departure_time"]
-                    })
-                except HTTPException as he:
-                    if he.status_code in [404, 400]:  # No active entry or already departed
-                        skipped_students.append({
-                            "user_id": student.user_id,
-                            "name": student.name,
-                            "reason": str(he.detail)
-                        })
-                    continue  # Skip this student and continue with others
             
             if not successful_departures:
                 raise HTTPException(
                     status_code=400, 
-                    detail="No departures processed. All students and instructor have already checked out or have no active entries."
+                    detail="No departures processed. Instructor has already checked out or has no active entries."
                 )
             
             return {
-                "message": "Group departure processed successfully",
+                "message": "Instructor departure processed successfully",
                 "instructor_id": user_id,
-                "successful_departures": successful_departures,
-                "skipped_students": skipped_students
+                "successful_departures": successful_departures
             }
         else:
             # Process single departure for non-instructor
@@ -336,125 +289,3 @@ def process_single_departure(user_id: int, app_user_id: int, db: Session):
         "duration": str(duration),
         "entry_type": latest_entry.get('entry_type', 'normal')
     }
-
-@router.post("/group_entry")
-async def group_entry(
-    user_id: int = Form(...),
-    current_app_user: models.AppUsers = Depends(get_current_app_user),
-    db: Session = Depends(get_db)
-):
-    try:
-        # Validate instructor
-        instructor = db.query(models.User).filter(
-            models.User.user_id == user_id,
-            models.User.is_instructor == True
-        ).first()
-        
-        if not instructor:
-            raise HTTPException(status_code=403, detail="User is not an instructor")
-        
-        if not instructor.institution_id:
-            raise HTTPException(status_code=400, detail="Instructor must be associated with an institution")
-
-        # Get all students from the same institution
-        students = db.query(models.User).filter(
-            models.User.is_student == True,
-            models.User.institution_id == instructor.institution_id
-        ).all()
-        
-        # Format student list
-        student_list = [{
-            "user_id": student.user_id,
-            "name": student.name,
-            "email": student.email,
-            # Add any other student fields you need
-        } for student in students]
-
-        return {
-            "status": "success",
-            "message": "Student list retrieved successfully",
-            "students": student_list
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-@router.post("/group_entry_bypass")
-async def group_entry_bypass(
-    user_id: int = Form(...),
-    student_ids: str = Form(...),
-    bypass_reason: str = Form(None),
-    current_app_user: models.AppUsers = Depends(get_current_app_user),
-    db: Session = Depends(get_db)
-):
-    try:
-        # Validate instructor
-        instructor = db.query(models.User).filter(
-            models.User.user_id == user_id,
-            models.User.is_instructor == True
-        ).first()
-
-        if not instructor:
-            raise HTTPException(status_code=403, detail="User is not an instructor")
-
-        if not instructor.institution_id:
-            raise HTTPException(status_code=400, detail="Instructor must be associated with an institution")
-
-        # Parse the JSON string to get list of student IDs
-        try:
-            student_ids = json.loads(student_ids)  # Parse the JSON string
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="Invalid student_ids format")
-        
-        # Validate student IDs
-        for student_id in student_ids:
-            student = db.query(models.User).filter(
-                models.User.user_id == student_id,
-                models.User.is_student == True
-            ).first()
-            if not student:
-                raise HTTPException(status_code=404, detail=f"Student with ID {student_id} not found")
-
-        # Create bypass entries for all students
-        for student_id in student_ids:
-            # Create a new bypass entry for the student
-            bypass_entry = {
-                "arrival": datetime.utcnow().isoformat(),
-                "departure": None,
-                "duration": None,
-                "entry_type": "bypass",
-                "qr_verified": True,
-                "qr_verification_time": datetime.utcnow().isoformat(),
-                "bypass_details": {
-                    "reason": bypass_reason or "No reason provided",
-                    "approved_by": current_app_user.user_id,
-                    "approved_at": datetime.utcnow().isoformat()
-                }
-            }
-
-            # Add the bypass entry to the student's record
-            student_record = db.query(models.FinalRecords).filter(
-                models.FinalRecords.user_id == student_id,
-                models.FinalRecords.entry_date == datetime.utcnow().date()
-            ).first()
-
-            if not student_record:
-                raise HTTPException(status_code=404, detail=f"No active entry found for student with ID {student_id}")
-
-            # Add the bypass entry to the student's record
-            student_record.time_logs.append(bypass_entry)
-            db.commit()
-            db.refresh(student_record)
-
-
-            # Log the bypass entry
-            firebase_controller.log_server_activity("INFO", f"Group entry bypass recorded for student_id: {student_id}")
-
-        return {
-            "status": "success",
-            "message": "Group entry bypass processed successfully"
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-

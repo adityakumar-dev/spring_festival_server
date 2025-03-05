@@ -167,7 +167,7 @@ def scan_qr(
             db.add(new_record)
 
         db.commit()
-        firebase_controller.log_qr_scan(user_id, user.name, True, "Successful QR scan")
+        # firebase_controller.log_qr_scan(user_id, user.name, True, "Successful QR scan")
         
         return {
             "message": "Check-in successful",
@@ -181,7 +181,7 @@ def scan_qr(
         
     except Exception as e:
         db.rollback()
-        firebase_controller.log_server_activity("ERROR", f"Error processing QR scan for user_id: {user_id} - {str(e)}")
+        # firebase_controller.log_server_activity("ERROR", f"Error processing QR scan for user_id: {user_id} - {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/departure")
@@ -280,7 +280,7 @@ def process_single_departure(user_id: int, app_user_id: int, db: Session):
     })
     
     db.commit()
-    firebase_controller.log_server_activity("INFO", f"Departure recorded for user_id: {user_id}")
+    # firebase_controller.log_server_activity("INFO", f"Departure recorded for user_id: {user_id}")
     
     return {
         "message": "Check-out successful",

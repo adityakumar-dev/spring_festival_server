@@ -134,10 +134,5 @@ async def verify_face(
                     "verification_time": current_time.isoformat()
                 }
         else:
-<<<<<<< HEAD
-
-            raise HTTPException(status_code=500, detail=str(e))
-=======
->>>>>>> 65ca67e65c8de394fe65559e9f943fb31249d8ca
 
             raise HTTPException(status_code=500, detail=str(e))

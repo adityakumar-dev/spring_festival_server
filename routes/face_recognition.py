@@ -62,8 +62,9 @@ async def verify_face(
 
                 if existing_record:
                     # Update the latest time_log entry with face verification
-                    if existing_record.time_logs and existing_record.time_logs[-1].get('departure') is None:
+                    if existing_record.time_logs:
                         latest_entry = existing_record.time_logs[-1]
+                        # Always update the latest entry, regardless of departure
                         latest_entry.update({
                             "face_verified": True,
                             "face_verification_time": current_time.isoformat(),
@@ -80,6 +81,7 @@ async def verify_face(
                             "time_logs": existing_record.time_logs,
                             "verified_by": app_user.user_id
                         })
+                        db.commit()
                 else:
                     # Create new record with face verification
                     new_record = models.FinalRecords(
@@ -132,6 +134,10 @@ async def verify_face(
                     "verification_time": current_time.isoformat()
                 }
         else:
+<<<<<<< HEAD
 
             raise HTTPException(status_code=500, detail=str(e))
+=======
+>>>>>>> 65ca67e65c8de394fe65559e9f943fb31249d8ca
 
+            raise HTTPException(status_code=500, detail=str(e))

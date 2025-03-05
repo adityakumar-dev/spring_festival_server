@@ -11,6 +11,7 @@ from utils.security import SecurityHandler
 
 router = APIRouter()
 UPLOAD_DIR = "uploads"
+
 @router.post("/face_recognition/verify")
 async def verify_face(
     user_id: int = Form(...),
@@ -51,39 +52,44 @@ async def verify_face(
             # Log the verification result only once
             firebase_controller.log_face_verification(user_id, user.name, is_match)
             
-            # If face match is successful
             if is_match:
                 current_time = datetime.utcnow()
-                # Check for existing record for today
                 existing_record = db.query(models.FinalRecords).filter(
                     models.FinalRecords.user_id == user_id,
                     models.FinalRecords.entry_date == current_time.date()
                 ).first()
 
                 if existing_record:
-                    # Update the latest time_log entry with face verification
-                    if existing_record.time_logs:
-                        latest_entry = existing_record.time_logs[-1]
-                        # Always update the latest entry, regardless of departure
-                        latest_entry.update({
+                    # Ensure `time_logs` is mutable
+                    updated_time_logs = existing_record.time_logs.copy() if existing_record.time_logs else []
+                    
+                    if updated_time_logs:
+                        latest_entry = updated_time_logs[-1]
+                    else:
+                        latest_entry = {
+                            "arrival": current_time.isoformat(),
+                            "departure": None,
+                            "duration": None,
+                            "entry_type": "normal",
                             "face_verified": True,
                             "face_verification_time": current_time.isoformat(),
                             "face_image_path": temp_image_path,
                             "verified_by": app_user.user_id
-                        })
-                        existing_record.time_logs[-1] = latest_entry
-                        
-                        # Update the database with modified time_logs
-                        db.query(models.FinalRecords).filter(
-                            models.FinalRecords.user_id == user_id,
-                            models.FinalRecords.entry_date == current_time.date()
-                        ).update({
-                            "time_logs": existing_record.time_logs,
-                            "verified_by": app_user.user_id
-                        })
-                        db.commit()
+                        }
+                        updated_time_logs.append(latest_entry)
+
+                    # Update latest entry
+                    latest_entry["face_verified"] = True
+                    latest_entry["face_verification_time"] = current_time.isoformat()
+                    latest_entry["face_image_path"] = temp_image_path
+                    latest_entry["verified_by"] = app_user.user_id
+
+                    # Apply changes
+                    existing_record.time_logs = updated_time_logs
+                    existing_record.verified_by = app_user.user_id
+                    db.flush()
                 else:
-                    # Create new record with face verification
+                    # Create a new record if none exists for today
                     new_record = models.FinalRecords(
                         user_id=user_id,
                         entry_date=current_time.date(),
@@ -101,38 +107,24 @@ async def verify_face(
                         }]
                     )
                     db.add(new_record)
-                db.commit()
-                # firebase_controller.log_success(user_id, user.name, "Face matched")
                 
-                # Return a successful response
+                db.commit()
+                
                 return {
                     "status": True, 
                     "message": "Face matched",
                     "verification_time": current_time.isoformat()
                 }
-
-            # If face did not match
+            
             else:
-                print("face not matched")
-                # firebase_controller.log_error(user_id, user.name, "Face did not match")
+                print("Face not matched")
                 raise HTTPException(status_code=400, detail="Face did not match")
         
         finally:
-            # Clean up temporary file
-            # print(is_match)
-            print("face recognition route finished")
+            print("Face recognition route finished")
+            if os.path.exists(temp_image_path):
+                os.remove(temp_image_path)  # Clean up temporary file
                 
     except Exception as e:
-        # print("is match" + is_match)
-        # Only log if we haven't already logged the verification
-        # if 'user' in locals() and user:
-        #     firebase_controller.log_face_verification(user_id, user.name, False)
-        if is_match:
-            return {
-                    "status": True, 
-                    "message": "Face matched",
-                    "verification_time": current_time.isoformat()
-                }
-        else:
-
-            raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error occurred: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

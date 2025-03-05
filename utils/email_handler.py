@@ -14,8 +14,8 @@ class EmailConfig:
     SMTP_PORT = 465  # SSL Port
     
     # Gmail Credentials (Use App Password)
-    EMAIL_ADDRESS = "adityakumar.devxlinux@gmail.com"
-    EMAIL_PASSWORD = "riogaktlwddorjfc"  # App password
+    EMAIL_ADDRESS = "rbspringfestival@gmail.com"
+    EMAIL_PASSWORD = "dmwmmgemutcequbf"  # App password
 
 class InvitationEmailHandler:
     def __init__(self):
